@@ -1,0 +1,81 @@
+﻿Clicker Layer structure:
+Visibility (hd): 0
+Opacity (ks.o): 100
+Type: gr, Name: Group 2147221242, Visibility (hd): undefined
+  Type: gr, Name: Vector 4533 (exclude) (exclude), Visibility (hd): undefined
+    Type: sh, Name: Path 1, Visibility (hd): undefined
+    Type: sh, Name: Path 2, Visibility (hd): undefined
+    Type: mm, Name: Merge Paths, Visibility (hd): undefined
+    Type: fl, Name: Fill, Visibility (hd): undefined
+    Type: st, Name: Stroke, Visibility (hd): undefined
+    Type: tr, Name: Transform, Visibility (hd): undefined
+  Type: gr, Name: Star 23, Visibility (hd): undefined
+    Type: sh, Name: Polystar Path 1, Visibility (hd): undefined
+    Type: rd, Name: Rounded Corners, Visibility (hd): undefined
+    Type: fl, Name: Fill, Visibility (hd): undefined
+    Type: st, Name: Stroke, Visibility (hd): undefined
+    Type: tr, Name: Transform, Visibility (hd): undefined
+  Type: gr, Name: Ellipse 71178, Visibility (hd): undefined
+    Type: el, Name: Ellipse, Visibility (hd): undefined
+    Type: fl, Name: Fill, Visibility (hd): undefined
+    Type: st, Name: Stroke, Visibility (hd): undefined
+    Type: tr, Name: Transform, Visibility (hd): undefined
+  Type: gr, Name: Vector 4537, Visibility (hd): undefined
+    Type: sh, Name: Path 1, Visibility (hd): undefined
+    Type: fl, Name: Fill, Visibility (hd): undefined
+    Type: st, Name: Stroke, Visibility (hd): undefined
+    Type: tr, Name: Transform, Visibility (hd): undefined
+  Type: gr, Name: Vector 4535 (Stroke), Visibility (hd): undefined
+    Type: sh, Name: Path 1, Visibility (hd): undefined
+    Type: fl, Name: Fill, Visibility (hd): undefined
+    Type: st, Name: Stroke, Visibility (hd): undefined
+    Type: tr, Name: Transform, Visibility (hd): undefined
+  Type: gr, Name: Vector 4541 (Stroke), Visibility (hd): undefined
+    Type: sh, Name: Path 1, Visibility (hd): undefined
+    Type: fl, Name: Fill, Visibility (hd): undefined
+    Type: st, Name: Stroke, Visibility (hd): undefined
+    Type: tr, Name: Transform, Visibility (hd): undefined
+  Type: gr, Name: Vector 4540 (Stroke), Visibility (hd): undefined
+    Type: sh, Name: Path 1, Visibility (hd): undefined
+    Type: fl, Name: Fill, Visibility (hd): undefined
+    Type: st, Name: Stroke, Visibility (hd): undefined
+    Type: tr, Name: Transform, Visibility (hd): undefined
+  Type: gr, Name: Vector 4539 (Stroke), Visibility (hd): undefined
+    Type: sh, Name: Path 1, Visibility (hd): undefined
+    Type: fl, Name: Fill, Visibility (hd): undefined
+    Type: st, Name: Stroke, Visibility (hd): undefined
+    Type: tr, Name: Transform, Visibility (hd): undefined
+  Type: gr, Name: Vector 4538 (Stroke), Visibility (hd): undefined
+    Type: sh, Name: Path 1, Visibility (hd): undefined
+    Type: fl, Name: Fill, Visibility (hd): undefined
+    Type: st, Name: Stroke, Visibility (hd): undefined
+    Type: tr, Name: Transform, Visibility (hd): undefined
+  Type: gr, Name: Vector 4534, Visibility (hd): undefined
+    Type: sh, Name: Path 1, Visibility (hd): undefined
+    Type: fl, Name: Fill, Visibility (hd): undefined
+    Type: st, Name: Stroke, Visibility (hd): undefined
+    Type: tr, Name: Transform, Visibility (hd): undefined
+  Type: gr, Name: Vector 4532, Visibility (hd): undefined
+    Type: sh, Name: Path 1, Visibility (hd): undefined
+    Type: fl, Name: Fill, Visibility (hd): undefined
+    Type: st, Name: Stroke, Visibility (hd): undefined
+    Type: tr, Name: Transform, Visibility (hd): undefined
+  Type: tr, Name: Transform, Visibility (hd): undefined
+Type: gr, Name: Vector 4520, Visibility (hd): undefined
+  Type: sh, Name: Path 1, Visibility (hd): undefined
+  Type: fl, Name: Fill, Visibility (hd): undefined
+  Type: st, Name: Stroke, Visibility (hd): undefined
+  Type: tr, Name: Transform, Visibility (hd): undefined
+Type: gr, Name: Vector 4519, Visibility (hd): undefined
+  Type: sh, Name: Path 1, Visibility (hd): undefined
+  Type: fl, Name: Fill, Visibility (hd): undefined
+  Type: st, Name: Stroke, Visibility (hd): undefined
+  Type: tr, Name: Transform, Visibility (hd): undefined
+Type: gr, Name: Rectangle 1532578613, Visibility (hd): undefined
+  Type: sh, Name: Path 1, Visibility (hd): undefined
+  Type: fl, Name: Fill, Visibility (hd): undefined
+  Type: st, Name: Stroke, Visibility (hd): undefined
+  Type: tr, Name: Transform, Visibility (hd): undefined
+Type: fl, Name: Fill, Visibility (hd): undefined
+Type: st, Name: Stroke, Visibility (hd): undefined
+Type: tr, Name: Transform, Visibility (hd): undefined

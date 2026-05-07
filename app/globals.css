@@ -1,0 +1,103 @@
+@import "tailwindcss";
+
+/* ─── Design Tokens (Dark) ────────────────────────────────── */
+:root {
+  /* Surfaces */
+  --bg-canvas:  #1E1E1E;
+  --bg-app:     #2B2B2D;
+  --bg-panel:   #1E1E20;
+  --bg-surface: #2A2A2C;
+  --bg-hover:   #333335;
+  --bg-active:  #3A3A3C;
+
+  /* Text */
+  --text-primary:   #F2F2F2;
+  --text-secondary: #B0B0B0;
+  --text-muted:     #7A7A7A;
+  --text-disabled:  #555555;
+
+  /* Accent (iOS Blue) */
+  --accent:       #0A84FF;
+  --accent-hover: #3396FF;
+  --accent-soft:  rgba(10, 132, 255, 0.18);
+
+  /* States */
+  --state-success: #30D158;
+  --state-error:   #FF453A;
+
+  /* Shadows — dark mode: background contrast does the work, no inline shadows */
+  --shadow-sm:    0 1px 3px rgba(0,0,0,0.4);
+  --shadow-md:    0 4px 16px rgba(0,0,0,0.5);
+  --shadow-lg:    0 8px 32px rgba(0,0,0,0.6);
+  --shadow-modal: 0 24px 64px rgba(0,0,0,0.6);
+}
+
+/* ─── Tailwind Tokens ─────────────────────────────────────── */
+@theme inline {
+  --color-background: var(--bg-app);
+  --color-foreground: var(--text-primary);
+
+  --color-canvas:  var(--bg-canvas);
+  --color-app:     var(--bg-app);
+  --color-panel:   var(--bg-panel);
+  --color-surface: var(--bg-surface);
+  --color-hover:   var(--bg-hover);
+  --color-active:  var(--bg-active);
+
+  --color-primary:   var(--text-primary);
+  --color-secondary: var(--text-secondary);
+  --color-muted:     var(--text-muted);
+  --color-disabled:  var(--text-disabled);
+
+  --color-accent:       var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft:  var(--accent-soft);
+
+  --color-success: var(--state-success);
+  --color-error:   var(--state-error);
+
+  /* Brand — reserved for LottiePro logo only, not interactive UI */
+  --color-brand:       #FF335A;
+  --color-brand-muted: #FF335A1A;
+  --color-brand-soft:  #FF335A0D;
+}
+
+/* ─── Base ────────────────────────────────────────────────── */
+body {
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── Scrollbars ──────────────────────────────────────────── */
+::-webkit-scrollbar        { width: 4px; height: 4px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  { background: rgba(255,255,255,0.08); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
+
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.08) transparent;
+}
+.custom-scrollbar::-webkit-scrollbar        { width: 4px; height: 4px; }
+.custom-scrollbar::-webkit-scrollbar-track  { background: transparent; }
+.custom-scrollbar::-webkit-scrollbar-thumb  { background: rgba(255,255,255,0.08); border-radius: 99px; }
+.custom-scrollbar:hover::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); }
+.custom-scrollbar::-webkit-scrollbar-corner { background: transparent; }
+
+.timeline-scroll-area::-webkit-scrollbar-thumb       { background: rgba(255,255,255,0.04); }
+.timeline-scroll-area:hover::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); }
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ─── Focus ───────────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

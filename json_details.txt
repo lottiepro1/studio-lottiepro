@@ -1,0 +1,11 @@
+﻿--- Stats ---
+Original JSON size: 63150
+Exported JSON size: 76835
+
+--- Precision Stats ---
+Original: { count: 6181, avgLen: 3.5612360459472576, maxPrecision: 16 }
+Exported: { count: 7888, avgLen: 4.108772819472617, maxPrecision: 20 }
+
+--- "nm" Fields ---
+Original: { count: 224, totalLen: 2097 }
+Exported: { count: 285, totalLen: 2368 }

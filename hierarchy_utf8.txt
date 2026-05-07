@@ -1,0 +1,22 @@
+--- Animation Info ---
+Layers: 16
+Layer [1] nm: Item deleted! Outlines, ty: 4, refId: undefined, parent: undefined, tt: undefined, td: undefined, tp: undefined
+Layer [2] nm: Vector 26, ty: 4, refId: undefined, parent: 14, tt: undefined, td: undefined, tp: undefined
+Layer [3] nm: Mask, ty: 4, refId: undefined, parent: 14, tt: undefined, td: 1, tp: undefined
+Layer [4] nm: Shape Layer 3, ty: 4, refId: undefined, parent: 14, tt: 1, td: undefined, tp: 3
+Layer [5] nm: Shape Layer 5, ty: 4, refId: undefined, parent: 14, tt: 1, td: 1, tp: 3
+Layer [6] nm: Vector, ty: 4, refId: undefined, parent: 14, tt: 2, td: undefined, tp: 5
+Layer [7] nm: Mask, ty: 0, refId: 1_1_d3fb4d65-7202-46f1-87a4-3dff14d92bef, parent: 14, tt: undefined, td: 1, tp: undefined
+Layer [8] nm: Shape Layer 2, ty: 4, refId: undefined, parent: 14, tt: 1, td: undefined, tp: 7
+Layer [9] nm: Shape Layer 4, ty: 4, refId: undefined, parent: 14, tt: 1, td: 1, tp: 7
+Layer [10] nm: Hold to delete - Precomp, ty: 0, refId: 1_1_d3fb4d65-7202-46f1-87a4-3dff14d92bef, parent: 14, tt: 2, td: undefined, tp: 9
+Layer [11] nm: Mask, ty: 4, refId: undefined, parent: 14, tt: undefined, td: 1, tp: undefined
+Layer [12] nm: Shape Layer 1, ty: 4, refId: undefined, parent: 14, tt: 1, td: undefined, tp: 11
+Layer [13] nm: Rectangle 72, ty: 4, refId: undefined, parent: undefined, tt: undefined, td: undefined, tp: undefined
+Layer [14] nm: Rectangle 71, ty: 4, refId: undefined, parent: undefined, tt: undefined, td: undefined, tp: undefined
+Layer [15] nm: Rectangle 70, ty: 4, refId: undefined, parent: undefined, tt: undefined, td: undefined, tp: undefined
+Layer [16] nm: White Solid 6, ty: 1, refId: undefined, parent: undefined, tt: undefined, td: undefined, tp: undefined
+
+--- Assets ---
+Asset id: 1_1_d3fb4d65-7202-46f1-87a4-3dff14d92bef, nm: Hold to delete - Precomp, layers: 1
+  Layer [1] nm: Hold to delete Outlines, ty: 4, refId: undefined, parent: undefined, tt: undefined, td: undefined, tp: undefined

@@ -1,0 +1,51 @@
+{
+  "name": "lottie-studio",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@lottiefiles/dotlottie-web": "^0.71.0",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-dropdown-menu": "^2.1.16",
+    "@radix-ui/react-popover": "^1.1.15",
+    "@radix-ui/react-slider": "^1.3.6",
+    "@tanstack/react-virtual": "^3.13.24",
+    "@types/pg": "^8.20.0",
+    "better-auth": "^1.6.7",
+    "bezier-easing": "^2.1.0",
+    "file-saver": "^2.0.5",
+    "immer": "^11.1.0",
+    "jszip": "^3.10.1",
+    "lightningcss": "^1.30.2",
+    "lottie-web": "^5.13.0",
+    "lucide-react": "^0.562.0",
+    "next": "16.1.1",
+    "opentype.js": "^1.3.4",
+    "paper": "^0.12.18",
+    "pg": "^8.20.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "svg-path-parser": "^1.1.0",
+    "svgson": "^5.3.1",
+    "zustand": "^5.0.9"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/file-saver": "^2.0.7",
+    "@types/node": "^20",
+    "@types/paper": "^0.11.14",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "adm-zip": "^0.5.16",
+    "babel-plugin-react-compiler": "1.0.0",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.1",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

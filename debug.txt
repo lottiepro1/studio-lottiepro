@@ -1,0 +1,53 @@
+[SM Engine] ✅ TRANSITION: [null] → [Hold] via edge from [Global State] | Guards: pointerhold == hold (actual: hold) | segCompleted=false
+[SM Engine] ⏱️ Resetting Playback on enter Hold? false (targetReset=false, edgePlayCurrent=undefined) | StartFrame=0, EndFrame=123
+[SM Engine] 🏁 State "Hold" segment COMPLETED. Collecting onCompleteActions: FireEvent(input_hc1r3qv1d),Reset(input_ktx7qlylh)
+[SM Engine] 📦 Firing deferred playback actions (no transition this frame): FireEvent(input_hc1r3qv1d),Reset(input_ktx7qlylh)
+[SM Engine] 📊 Variables after actions: pointerhold=false, deleted=true
+[SM Engine] ✅ TRANSITION: [Hold] → [Deleted] via edge from [Hold] | Guards: deleted ==  (actual: true) | segCompleted=true
+[SM Engine] ⏱️ Resetting Playback on enter Deleted? true (targetReset=undefined, edgePlayCurrent=undefined) | StartFrame=124, EndFrame=291
+[SM Engine] ⏰ Time was set to 124. Current store time is now: 124
+[SM Engine] ✅ TRANSITION: [Deleted] → [Hold] via edge from [Global State] | Guards: pointerhold == hold (actual: hold) | segCompleted=true
+[SM Engine] ⏱️ Resetting Playback on enter Hold? false (targetReset=false, edgePlayCurrent=undefined) | StartFrame=0, EndFrame=123
+[SM Engine] 🏁 State "Hold" segment COMPLETED. Collecting onCompleteActions: FireEvent(input_hc1r3qv1d),Reset(input_ktx7qlylh)
+[SM Engine] 📦 Firing deferred playback actions (no transition this frame): FireEvent(input_hc1r3qv1d),Reset(input_ktx7qlylh)
+[SM Engine] 📊 Variables after actions: pointerhold=false, deleted=true
+[SM Engine] ✅ TRANSITION: [Hold] → [Deleted] via edge from [Hold] | Guards: deleted ==  (actual: true) | segCompleted=true
+[SM Engine] ⏱️ Resetting Playback on enter Deleted? true (targetReset=undefined, edgePlayCurrent=undefined) | StartFrame=124, EndFrame=291
+[SM Engine] ⏰ Time was set to 124. Current store time is now: 124
+[SM Engine] ✅ TRANSITION: [null] → [Hold] via edge from [Global State] | Guards: pointerhold == hold (actual: hold) | segCompleted=false
+[SM Engine] ⏱️ Resetting Playback on enter Hold? true (targetReset=true, edgePlayCurrent=undefined) | StartFrame=0, EndFrame=123
+[SM Engine] ⏰ Time was set to 0. Current store time is now: 0
+[SM Engine] 📦 Firing deferred playback actions (no transition this frame): FireEvent(input_hc1r3qv1d),Reset(input_ktx7qlylh)
+[SM Engine] 📊 Variables after actions: pointerhold=false, deleted=true
+[SM Engine] 🏁 State "Hold" segment COMPLETED. Collecting onCompleteActions: FireEvent(input_hc1r3qv1d),Reset(input_ktx7qlylh)
+[SM Engine] ✅ TRANSITION: [Hold] → [Deleted] via edge from [Hold] | Guards: deleted ==  (actual: true) | segCompleted=true
+[SM Engine] ⏱️ Resetting Playback on enter Deleted? true (targetReset=undefined, edgePlayCurrent=undefined) | StartFrame=124, EndFrame=291
+[SM Engine] ⏰ Time was set to 124. Current store time is now: 124
+[SM Engine] ✅ TRANSITION: [Deleted] → [Hold] via edge from [Global State] | Guards: pointerhold == hold (actual: hold) | segCompleted=true
+[SM Engine] ⏱️ Resetting Playback on enter Hold? true (targetReset=true, edgePlayCurrent=undefined) | StartFrame=0, EndFrame=123
+[SM Engine] ⏰ Time was set to 0. Current store time is now: 0
+[SM Engine] ✅ TRANSITION: [Hold] → [Hold] via edge from [Global State] | Guards: pointerhold == release (actual: release) | segCompleted=false
+[SM Engine] ⏱️ Resetting Playback on enter Hold? false (targetReset=false, edgePlayCurrent=undefined) | StartFrame=0, EndFrame=123
+[SM Engine] ✅ TRANSITION: [Hold] → [Hold] via edge from [Global State] | Guards: pointerhold == hold (actual: hold) | segCompleted=false
+[SM Engine] ⏱️ Resetting Playback on enter Hold? true (targetReset=true, edgePlayCurrent=undefined) | StartFrame=0, EndFrame=123
+[SM Engine] ⏰ Time was set to 0. Current store time is now: 0
+[SM Engine] ✅ TRANSITION: [Hold] → [Hold] via edge from [Global State] | Guards: pointerhold == release (actual: release) | segCompleted=false
+[SM Engine] ⏱️ Resetting Playback on enter Hold? false (targetReset=false, edgePlayCurrent=undefined) | StartFrame=0, EndFrame=123
+[SM Engine] ✅ TRANSITION: [Hold] → [Hold] via edge from [Global State] | Guards: pointerhold == hold (actual: hold) | segCompleted=false
+[SM Engine] ⏱️ Resetting Playback on enter Hold? true (targetReset=true, edgePlayCurrent=undefined) | StartFrame=0, EndFrame=123
+[SM Engine] ⏰ Time was set to 0. Current store time is now: 0
+[SM Engine] 🏁 State "Hold" segment COMPLETED. Collecting onCompleteActions: FireEvent(input_hc1r3qv1d),Reset(input_ktx7qlylh)
+[SM Engine] 📦 Firing deferred playback actions (no transition this frame): FireEvent(input_hc1r3qv1d),Reset(input_ktx7qlylh)
+[SM Engine] 📊 Variables after actions: pointerhold=false, deleted=true
+[SM Engine] ✅ TRANSITION: [Hold] → [Deleted] via edge from [Hold] | Guards: deleted ==  (actual: true) | segCompleted=true
+[SM Engine] ⏱️ Resetting Playback on enter Deleted? true (targetReset=undefined, edgePlayCurrent=undefined) | StartFrame=124, EndFrame=291
+[SM Engine] ⏰ Time was set to 124. Current store time is now: 124
+[SM Engine] ✅ TRANSITION: [Deleted] → [Hold] via edge from [Global State] | Guards: pointerhold == hold (actual: hold) | segCompleted=true
+[SM Engine] ⏱️ Resetting Playback on enter Hold? true (targetReset=true, edgePlayCurrent=undefined) | StartFrame=0, EndFrame=123
+[SM Engine] ⏰ Time was set to 0. Current store time is now: 0
+[SM Engine] 🏁 State "Hold" segment COMPLETED. Collecting onCompleteActions: FireEvent(input_hc1r3qv1d),Reset(input_ktx7qlylh)
+[SM Engine] 📦 Firing deferred playback actions (no transition this frame): FireEvent(input_hc1r3qv1d),Reset(input_ktx7qlylh)
+[SM Engine] 📊 Variables after actions: pointerhold=false, deleted=true
+[SM Engine] ✅ TRANSITION: [Hold] → [Deleted] via edge from [Hold] | Guards: deleted ==  (actual: true) | segCompleted=true
+[SM Engine] ⏱️ Resetting Playback on enter Deleted? true (targetReset=undefined, edgePlayCurrent=undefined) | StartFrame=124, EndFrame=291
+[SM Engine] ⏰ Time was set to 124. Current store time is now: 124

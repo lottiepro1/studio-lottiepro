@@ -1,0 +1,200 @@
+﻿
+
+=== Group 2147221241 1 ===
+
+Original Structure:
+Type: gr, Name: Vector 4544
+  Type: sh, Name: Path 1
+  Type: st, Name: Stroke 1
+  Type: fl, Name: Fill 1, Color: [0.1843,0.2118,0.5098]
+  Type: tr, Name: undefined, Opacity: 100
+Type: gr, Name: Vector 4521
+  Type: sh, Name: Path 1
+  Type: st, Name: Stroke 1
+  Type: fl, Name: Fill 1, Color: [0.2314,0.3412,0.7373]
+  Type: tr, Name: undefined, Opacity: 100
+Type: gr, Name: Vector 4523
+  Type: sh, Name: Path 1
+  Type: st, Name: Stroke 1
+  Type: fl, Name: Fill 1, Color: [0.2314,0.3412,0.7373]
+  Type: tr, Name: undefined, Opacity: 100
+Type: gr, Name: Vector 4522
+  Type: sh, Name: Path 1
+  Type: st, Name: Stroke 1
+  Type: fl, Name: Fill 1, Color: [0.2314,0.3412,0.7373]
+  Type: tr, Name: undefined, Opacity: 100
+Type: gr, Name: Subtract
+  Type: sh, Name: Path 1
+  Type: st, Name: Stroke 1
+  Type: fl, Name: Fill 1, Color: [0.6784,0.8118,1]
+  Type: tr, Name: undefined, Opacity: 100
+
+Exported Structure:
+Type: gr, Name: Vector 4544
+  Type: sh, Name: Path 1
+  Type: fl, Name: Fill, Color: [0.1803921568627451,0.21176470588235294,0.5058823529411764]
+  Type: st, Name: Stroke
+  Type: tr, Name: Transform, Opacity: 100
+Type: gr, Name: Vector 4521
+  Type: sh, Name: Path 1
+  Type: fl, Name: Fill, Color: [0.23137254901960785,0.3411764705882353,0.7372549019607844]
+  Type: st, Name: Stroke
+  Type: tr, Name: Transform, Opacity: 100
+Type: gr, Name: Vector 4523
+  Type: sh, Name: Path 1
+  Type: fl, Name: Fill, Color: [0.23137254901960785,0.3411764705882353,0.7372549019607844]
+  Type: st, Name: Stroke
+  Type: tr, Name: Transform, Opacity: 100
+Type: gr, Name: Vector 4522
+  Type: sh, Name: Path 1
+  Type: fl, Name: Fill, Color: [0.23137254901960785,0.3411764705882353,0.7372549019607844]
+  Type: st, Name: Stroke
+  Type: tr, Name: Transform, Opacity: 100
+Type: gr, Name: Subtract
+  Type: sh, Name: Path 1
+  Type: fl, Name: Fill, Color: [0.6745098039215687,0.8117647058823529,1]
+  Type: st, Name: Stroke
+  Type: tr, Name: Transform, Opacity: 100
+Type: fl, Name: Fill, Color: [0.6745098039215687,0.8117647058823529,1]
+Type: st, Name: Stroke
+Type: tr, Name: Transform, Opacity: 100
+
+
+=== Group 2147221240 ===
+
+Original Structure:
+Type: gr, Name: Vector 4525
+  Type: sh, Name: Path 1
+  Type: st, Name: Stroke 1
+  Type: fl, Name: Fill 1, Color: [0.4196,0.5765,0.9725]
+  Type: tr, Name: undefined, Opacity: 100
+Type: gr, Name: Rectangle 1532578612
+  Type: sh, Name: Path 1
+  Type: st, Name: Stroke 1
+  Type: fl, Name: Fill 1, Color: [0.698,0.8235,1]
+  Type: tr, Name: undefined, Opacity: 100
+Type: gr, Name: Vector 4524
+  Type: sh, Name: Path 1
+  Type: st, Name: Stroke 1
+  Type: fl, Name: Fill 1, Color: [0.1843,0.2118,0.5255]
+  Type: tr, Name: undefined, Opacity: 100
+Type: gr, Name: Vector 4529
+  Type: sh, Name: Path 1
+  Type: st, Name: Stroke 1
+  Type: fl, Name: Fill 1, Color: [0.1843,0.2118,0.5255]
+  Type: tr, Name: undefined, Opacity: 100
+Type: gr, Name: Vector 4528
+  Type: sh, Name: Path 1
+  Type: st, Name: Stroke 1
+  Type: fl, Name: Fill 1, Color: [0.4196,0.5765,0.9725]
+  Type: tr, Name: undefined, Opacity: 100
+Type: gr, Name: Rectangle 1532578615
+  Type: sh, Name: Path 1
+  Type: st, Name: Stroke 1
+  Type: fl, Name: Fill 1, Color: [0.698,0.8235,1]
+  Type: tr, Name: undefined, Opacity: 100
+Type: gr, Name: Vector 4531
+  Type: sh, Name: Path 1
+  Type: st, Name: Stroke 1
+  Type: fl, Name: Fill 1, Color: [0.1843,0.2118,0.5255]
+  Type: tr, Name: undefined, Opacity: 100
+Type: gr, Name: Vector 4530
+  Type: sh, Name: Path 1
+  Type: st, Name: Stroke 1
+  Type: fl, Name: Fill 1, Color: [0.4196,0.5765,0.9725]
+  Type: tr, Name: undefined, Opacity: 100
+Type: gr, Name: Rectangle 1532578616
+  Type: sh, Name: Path 1
+  Type: st, Name: Stroke 1
+  Type: fl, Name: Fill 1, Color: [0.698,0.8235,1]
+  Type: tr, Name: undefined, Opacity: 100
+Type: gr, Name: Vector 4527
+  Type: sh, Name: Path 1
+  Type: st, Name: Stroke 1
+  Type: fl, Name: Fill 1, Color: [0.4196,0.5765,0.9725]
+  Type: tr, Name: undefined, Opacity: 100
+Type: gr, Name: Rectangle 1532578614
+  Type: sh, Name: Path 1
+  Type: st, Name: Stroke 1
+  Type: fl, Name: Fill 1, Color: [0.698,0.8235,1]
+  Type: tr, Name: undefined, Opacity: 100
+Type: gr, Name: Vector 4526
+  Type: sh, Name: Path 1
+  Type: st, Name: Stroke 1
+  Type: fl, Name: Fill 1, Color: [0.1843,0.2118,0.5255]
+  Type: tr, Name: undefined, Opacity: 100
+Type: gr, Name: Vector 4516
+  Type: sh, Name: Path 1
+  Type: st, Name: Stroke 1
+  Type: fl, Name: Fill 1, Color: [0.0588,0.0118,0.149]
+  Type: tr, Name: undefined, Opacity: 100
+
+Exported Structure:
+Type: gr, Name: Vector 4525
+  Type: sh, Name: Path 1
+  Type: fl, Name: Fill, Color: [0.41568627450980394,0.5764705882352941,0.9686274509803922]
+  Type: st, Name: Stroke
+  Type: tr, Name: Transform, Opacity: 100
+Type: gr, Name: Rectangle 1532578612
+  Type: sh, Name: Path 1
+  Type: fl, Name: Fill, Color: [0.6941176470588235,0.8196078431372549,1]
+  Type: st, Name: Stroke
+  Type: tr, Name: Transform, Opacity: 100
+Type: gr, Name: Vector 4524
+  Type: sh, Name: Path 1
+  Type: fl, Name: Fill, Color: [0.1803921568627451,0.21176470588235294,0.5254901960784314]
+  Type: st, Name: Stroke
+  Type: tr, Name: Transform, Opacity: 100
+Type: gr, Name: Vector 4529
+  Type: sh, Name: Path 1
+  Type: fl, Name: Fill, Color: [0.1803921568627451,0.21176470588235294,0.5254901960784314]
+  Type: st, Name: Stroke
+  Type: tr, Name: Transform, Opacity: 100
+Type: gr, Name: Vector 4528
+  Type: sh, Name: Path 1
+  Type: fl, Name: Fill, Color: [0.41568627450980394,0.5764705882352941,0.9686274509803922]
+  Type: st, Name: Stroke
+  Type: tr, Name: Transform, Opacity: 100
+Type: gr, Name: Rectangle 1532578615
+  Type: sh, Name: Path 1
+  Type: fl, Name: Fill, Color: [0.6941176470588235,0.8196078431372549,1]
+  Type: st, Name: Stroke
+  Type: tr, Name: Transform, Opacity: 100
+Type: gr, Name: Vector 4531
+  Type: sh, Name: Path 1
+  Type: fl, Name: Fill, Color: [0.1803921568627451,0.21176470588235294,0.5254901960784314]
+  Type: st, Name: Stroke
+  Type: tr, Name: Transform, Opacity: 100
+Type: gr, Name: Vector 4530
+  Type: sh, Name: Path 1
+  Type: fl, Name: Fill, Color: [0.41568627450980394,0.5764705882352941,0.9686274509803922]
+  Type: st, Name: Stroke
+  Type: tr, Name: Transform, Opacity: 100
+Type: gr, Name: Rectangle 1532578616
+  Type: sh, Name: Path 1
+  Type: fl, Name: Fill, Color: [0.6941176470588235,0.8196078431372549,1]
+  Type: st, Name: Stroke
+  Type: tr, Name: Transform, Opacity: 100
+Type: gr, Name: Vector 4527
+  Type: sh, Name: Path 1
+  Type: fl, Name: Fill, Color: [0.41568627450980394,0.5764705882352941,0.9686274509803922]
+  Type: st, Name: Stroke
+  Type: tr, Name: Transform, Opacity: 100
+Type: gr, Name: Rectangle 1532578614
+  Type: sh, Name: Path 1
+  Type: fl, Name: Fill, Color: [0.6941176470588235,0.8196078431372549,1]
+  Type: st, Name: Stroke
+  Type: tr, Name: Transform, Opacity: 100
+Type: gr, Name: Vector 4526
+  Type: sh, Name: Path 1
+  Type: fl, Name: Fill, Color: [0.1803921568627451,0.21176470588235294,0.5254901960784314]
+  Type: st, Name: Stroke
+  Type: tr, Name: Transform, Opacity: 100
+Type: gr, Name: Vector 4516
+  Type: sh, Name: Path 1
+  Type: fl, Name: Fill, Color: [0.054901960784313725,0.011764705882352941,0.1450980392156863]
+  Type: st, Name: Stroke
+  Type: tr, Name: Transform, Opacity: 100
+Type: fl, Name: Fill, Color: [0.054901960784313725,0.011764705882352941,0.1450980392156863]
+Type: st, Name: Stroke
+Type: tr, Name: Transform, Opacity: 100

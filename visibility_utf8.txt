@@ -1,0 +1,16 @@
+Node: Item deleted! Outlines, visibility: true, matteTargets: 0
+Node: Vector 26, visibility: true, matteTargets: 0
+Node: Mask, visibility: false, matteTargets: 2
+Node: Shape Layer 3, visibility: true, matteTargets: 0
+Node: Shape Layer 5, visibility: false, matteTargets: 1
+Node: Vector, visibility: true, matteTargets: 0
+Node: Mask, visibility: false, matteTargets: 2
+Node: Shape Layer 2, visibility: true, matteTargets: 0
+Node: Shape Layer 4, visibility: false, matteTargets: 1
+Node: Hold to delete - Precomp, visibility: true, matteTargets: 0
+Node: Mask, visibility: false, matteTargets: 1
+Node: Shape Layer 1, visibility: true, matteTargets: 0
+Node: Rectangle 72, visibility: true, matteTargets: 0
+Node: Rectangle 71, visibility: true, matteTargets: 0
+Node: Rectangle 70, visibility: true, matteTargets: 0
+Node: White Solid 6, visibility: true, matteTargets: 0

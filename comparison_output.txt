@@ -1,0 +1,74 @@
+﻿
+--- Comparison for Ellipse 71179 ---
+Original Layer properties: [
+  'ty',      'nm',
+  'sr',      'st',
+  'op',      'ip',
+  'hd',      'ln',
+  'ddd',     'bm',
+  'hasMask', 'ao',
+  'ind',     'parent'
+]
+Exported Layer properties: [
+  'ty',     'nm',
+  'ln',     'ind',
+  'ip',     'op',
+  'st',     'bm',
+  'ddd',    'hd',
+  'parent'
+]
+
+Original shapes structure:
+Type: gr, Name: Ellipse 71178
+  Type: el, Name: Ellipse Path 1
+  Type: st, Name: Stroke 1, Width: 3
+  Type: op, Name: Stroke align: Inside
+  Type: fl, Name: Fill 1, Color: [1,0.5529,0]
+  Type: tr, Name: undefined
+
+Exported shapes structure:
+Type: gr, Name: Ellipse 71178
+  Type: el, Name: Ellipse
+  Type: fl, Name: Fill, Color: [1,0.5490196078431373,0]
+  Type: st, Name: Stroke, Width: 3
+  Type: tr, Name: Transform
+Type: fl, Name: Fill, Color: [1,0.5490196078431373,0]
+Type: st, Name: Stroke, Width: 3
+Type: tr, Name: Transform
+
+--- Comparison for Ellipse 71180 ---
+Original Layer properties: [
+  'ty',      'nm',
+  'sr',      'st',
+  'op',      'ip',
+  'hd',      'ln',
+  'ddd',     'bm',
+  'hasMask', 'ao',
+  'ind',     'parent'
+]
+Exported Layer properties: [
+  'ty',     'nm',
+  'ln',     'ind',
+  'ip',     'op',
+  'st',     'bm',
+  'ddd',    'hd',
+  'parent'
+]
+
+Original shapes structure:
+Type: gr, Name: Ellipse 71178
+  Type: el, Name: Ellipse Path 1
+  Type: st, Name: Stroke 1, Width: 3
+  Type: op, Name: Stroke align: Inside
+  Type: fl, Name: Fill 1, Color: [0.9882,0.7333,0.9843]
+  Type: tr, Name: undefined
+
+Exported shapes structure:
+Type: gr, Name: Ellipse 71178
+  Type: el, Name: Ellipse
+  Type: fl, Name: Fill, Color: [0.984313725490196,0.7294117647058823,0.9803921568627451]
+  Type: st, Name: Stroke, Width: 3
+  Type: tr, Name: Transform
+Type: fl, Name: Fill, Color: [0.984313725490196,0.7294117647058823,0.9803921568627451]
+Type: st, Name: Stroke, Width: 3
+Type: tr, Name: Transform
