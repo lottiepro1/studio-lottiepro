@@ -638,27 +638,9 @@ export default function InspectorPanel() {
 
   const isRectOrEllipseOrPath = hasSelectionType('rect') || hasSelectionType('ellipse') || hasSelectionType('path') || hasSelectionType('polystar') || hasSelectionType('precomp') || hasSelectionType('group') || hasSelectionType('image');
 
-  const isOnlyPrimitivesSelected = (() => {
-    const targets = selectedIds.length > 0 ? selectedIds.map(id => nodes.get(id)) : (previewNode ? [previewNode] : []);
-    if (targets.length === 0) return false;
-
-    // We only restrict properties if ALL selected nodes are primitive shapes INSIDE a group.
-    // However, if the user explicitly selects the group, we SHOULD allow editing its appearance.
-    return targets.every(node => {
-      if (!node) return false;
-      const isPrimitive = node.type === 'rect' || node.type === 'ellipse' || node.type === 'path' || node.type === 'polystar';
-      if (!isPrimitive) return false;
-
-      // Find if this specific node is a direct child of a group
-      const parent = node.parentId ? nodes.get(node.parentId) : null;
-      const isGroupChild = parent?.type === 'group';
-
-      // If we are inspecting a group-child but the group itself is NOT selected, we might want to restrict.
-      // But usually, if it's in a selection, we want to edit it.
-      // The user's request specifically mentions wanting to edit from the main group.
-      return isGroupChild;
-    });
-  })();
+  // The user explicitly requested that shapes inside groups should have their properties exposed
+  // so they can be individually styled and animated (like in After Effects and LottieFiles).
+  const isOnlyPrimitivesSelected = false;
 
   return (
     <div className="w-80 h-full bg-transparent flex flex-col overflow-y-auto custom-scrollbar select-none pb-12 min-h-0">

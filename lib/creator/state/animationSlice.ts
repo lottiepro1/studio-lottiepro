@@ -317,9 +317,9 @@ export const createAnimationSlice: StateCreator<CreatorStore, [["zustand/immer",
             if (!hasOpacAnims)  ks.o = { a: 0, k: safeNum(node.style.opacity, 1) * 100 };
 
             // Phase 4.6 — Patch ks.a (anchor) whenever geometry is static.
-            // Anchor changes whenever width/height/radius change for center-aligned shapes.
-            // ks.a must always match the shape primitive's local center (rc.p / el.p) so ThorVG
-            // positions the layer correctly after a resize.
+            // ks.a is the layer's anchor/pivot point — the point in local space that maps
+            // to ks.p in parent space. This is independent of the shape's geometric center
+            // (which is stored in the shape primitive's p, e.g., rc.p = [w/2, h/2]).
             const geomUnanimated = !hasAnchorAnims && !hasWidthAnims && !hasHeightAnims && !hasRxAnims && !hasRyAnims;
             const anchor = geomUnanimated ? getAnimatedAnchor(node, draft.nodes) : null;
             if (anchor) {
@@ -387,34 +387,39 @@ export const createAnimationSlice: StateCreator<CreatorStore, [["zustand/immer",
                                 const r = safeNum(node.props?.roundness, 0);
                                 if (r === 0) { delete item.r; } else { item.r = { a: 0, k: r }; }
                             }
-                            // Local center = anchor (layer-root invariant). Update or create p.
-                            if (anchor) {
-                                if (anchor.x === 0 && anchor.y === 0) {
+                            // Local center = geometric center of shape (NOT anchor).
+                            // The anchor is handled by the layer transform ks.a, while shape.p is
+                            // where the shape draws its visual center in layer-local space.
+                            {
+                                const gx = safeNum(node.props?.width, 100) / 2;
+                                const gy = safeNum(node.props?.height, 100) / 2;
+                                if (gx === 0 && gy === 0) {
                                     delete item.p;
                                 } else if (item.p?.a === 0 || !item.p) {
-                                    item.p = { a: 0, k: [safeNum(anchor.x), safeNum(anchor.y)] };
+                                    item.p = { a: 0, k: [safeNum(gx), safeNum(gy)] };
                                 }
                             }
                         } else if (item.ty === 'el') {
                             if (!hasRxAnims && !hasRyAnims && item.s?.a === 0) {
                                 item.s = { a: 0, k: [safeNum(node.props?.radiusX, 50) * 2, safeNum(node.props?.radiusY, 50) * 2] };
                             }
-                            if (anchor) {
-                                if (anchor.x === 0 && anchor.y === 0) {
+                            {
+                                const gx = safeNum(node.props?.radiusX, 50);
+                                const gy = safeNum(node.props?.radiusY, 50);
+                                if (gx === 0 && gy === 0) {
                                     delete item.p;
                                 } else if (item.p?.a === 0 || !item.p) {
-                                    item.p = { a: 0, k: [safeNum(anchor.x), safeNum(anchor.y)] };
+                                    item.p = { a: 0, k: [safeNum(gx), safeNum(gy)] };
                                 }
                             }
                         } else if (item.ty === 'sr') {
                             if (!hasPtAnims && item.pt?.a === 0) item.pt = { a: 0, k: safeNum(node.props?.points, 5) };
                             if (!hasOrAnims && item.or?.a === 0) item.or = { a: 0, k: safeNum(node.props?.outerRadius, 50) };
                             if (!hasIrAnims && item.ir?.a === 0) item.ir = { a: 0, k: safeNum(node.props?.innerRadius, 25) };
-                            if (anchor) {
-                                if (anchor.x === 0 && anchor.y === 0) {
-                                    delete item.p;
-                                } else if (item.p?.a === 0 || !item.p) {
-                                    item.p = { a: 0, k: [safeNum(anchor.x), safeNum(anchor.y)] };
+                            // Polystar is inherently centered at origin
+                            {
+                                if (item.p?.a === 0 || !item.p) {
+                                    item.p = { a: 0, k: [0, 0] };
                                 }
                             }
                         } else if (item.ty === 'sh') {
@@ -1308,7 +1313,16 @@ export const createAnimationSlice: StateCreator<CreatorStore, [["zustand/immer",
             ('style.fill' in processedUpdates && !!node.style.fillGradient) ||
             ('style.stroke' in processedUpdates && !!node.style.strokeGradient);
 
-        const needsStructuralReload = didKeyframe || hasGradientUpdate;
+        const hasTrimUpdate = 'style.trimStart' in processedUpdates ||
+            'style.trimEnd' in processedUpdates ||
+            'style.trimOffset' in processedUpdates;
+
+        // Nested shapes from imported layers (which have parsed snapshots but no raw Lottie data themselves)
+        // must trigger a structural reload so the exporter's deep overlay logic can apply their specific edits,
+        // bypassing the fast-path which only supports root layers.
+        const isNestedImportedShape = !node._rawLottieData && (node._originalParsedFill !== undefined || node._originalParsedOpacity !== undefined);
+
+        const needsStructuralReload = didKeyframe || hasGradientUpdate || hasTrimUpdate || isNestedImportedShape;
         const updates: any = { nodes: newNodes, updateCounter: state.updateCounter + 1, ...(needsStructuralReload && { structureChangeCounter: state.structureChangeCounter + 1 }) };
 
         if (node.type === 'artboard') {

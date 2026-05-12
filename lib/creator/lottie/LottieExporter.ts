@@ -332,15 +332,48 @@ export class LottieExporter {
             // ALL fills in a multi-color layer to the single color the parser lifted onto the node —
             // completely breaking the visual appearance of complex imported animations.
             if (raw.ty === 4 && Array.isArray(losslessLayer.shapes)) {
-                const fillEdited = !!node.style.fill && node.style.fill !== node._originalParsedFill;
-                const strokeEdited =
+                const hasFillAnim = (node.animations?.['style.fill']?.length ?? 0) > 0 || (node.animations?.['style.fillOpacity']?.length ?? 0) > 0;
+                const fillEdited = hasFillAnim || (!!node.style.fill && node.style.fill !== node._originalParsedFill);
+                
+                const hasStrokeAnim = (node.animations?.['style.stroke']?.length ?? 0) > 0 || (node.animations?.['style.strokeWidth']?.length ?? 0) > 0 || (node.animations?.['style.strokeOpacity']?.length ?? 0) > 0;
+                const strokeEdited = hasStrokeAnim ||
                     (!!node.style.stroke && node.style.stroke !== node._originalParsedStroke) ||
                     ((node.style.strokeWidth ?? 0) > 0 && node.style.strokeWidth !== node._originalParsedStrokeWidth);
-                const trimEdited =
+                
+                const hasTrimAnim = (node.animations?.['style.trimStart']?.length ?? 0) > 0 ||
+                    (node.animations?.['style.trimEnd']?.length ?? 0) > 0 ||
+                    (node.animations?.['style.trimOffset']?.length ?? 0) > 0;
+                const trimEdited = hasTrimAnim ||
                     (node.style.trimStart ?? 0) !== 0 || (node.style.trimEnd ?? 1) !== 1 || (node.style.trimOffset ?? 0) !== 0;
 
-                if (fillEdited || strokeEdited || trimEdited) {
-                    losslessLayer.shapes = LottieExporter.overlayStyleOnShapes(losslessLayer.shapes, node.style);
+                // Only overlay fill/stroke when those are actually edited.
+                // Calling overlayStyleOnShapes when only trim changed would flatten multi-color
+                // imported layers to a single fill color (the one the parser lifted onto the node).
+                // Trim is handled separately by Phase 3b below.
+                // Always overlay style; the function will recursively evaluate edits for both the root layer and its inner shapes.
+                losslessLayer.shapes = LottieExporter.overlayStyleOnShapes(losslessLayer.shapes, node, nodes, fillEdited, strokeEdited, trimEdited);
+
+                // Phase 3b: Inject trim path for imported layers.
+                // overlayStyleOnShapes only patches EXISTING tm items. If the original layer had
+                // no trim path (which is the common case), we must inject one.
+                // In Lottie, a `tm` item at the top level of the shapes array trims ALL preceding
+                // sibling shapes (including sub-groups). This is how After Effects and lottie-web
+                // apply trim paths to entire layers/groups.
+
+                const ts = node.style.trimStart ?? 0;
+                const te = node.style.trimEnd ?? 1;
+                const to = node.style.trimOffset ?? 0;
+                if (trimEdited || hasTrimAnim) {
+                    // Remove any existing tm items at top level to avoid duplicates
+                    losslessLayer.shapes = losslessLayer.shapes.filter((s: any) => s?.ty !== 'tm');
+                    // Append new tm with proper animation support
+                    losslessLayer.shapes.push({
+                        ty: 'tm', nm: 'Trim Paths',
+                        s: LottieExporter.mapProperty(ts * 100, node.animations?.['style.trimStart']?.map(k => ({ ...k, value: k.value * 100 }))),
+                        e: LottieExporter.mapProperty(te * 100, node.animations?.['style.trimEnd']?.map(k => ({ ...k, value: k.value * 100 }))),
+                        o: LottieExporter.mapProperty(to, node.animations?.['style.trimOffset']),
+                        m: 1 // Simultaneously (affects all paths at once)
+                    });
                 }
             }
             // Overlay effects (blur, shadow) if the user has edited them
@@ -643,16 +676,30 @@ export class LottieExporter {
         const isLeafShape = !hasChildren && (node.type === 'rect' || node.type === 'ellipse' || node.type === 'path' || node.type === 'polystar');
 
         // For layer-root shapes, the layer transform (ks.p/ks.a) already positions the layer.
-        // The shape's local `p` (center in layer-local space) must equal the layer anchor so that:
-        //   layer_local_to_artboard(anchor) = ks.p  (the shape center lands at the world position)
-        // Using p=[0,0] shifts the shape by -anchor, causing misplacement and breaking gradient coords.
-        const layerRootAnchor = isLayerRoot ? getAnimatedAnchor(node, nodes) : null;
+        // The shape's `p` (center in layer-local space) must be the shape's GEOMETRIC center,
+        // NOT the layer anchor. The layer transform's T(-anchor) handles the anchor offset.
+        //
+        // In Lottie, `rc` (rect) and `el` (ellipse) draw centered at `p`. If `p` is set to the
+        // anchor value, changing the anchor from center to top-left would shift the shape because
+        // the shape's visual center would move with the anchor. Using the geometric center ensures
+        // the shape stays in place — only the pivot (anchor) moves.
+        //
+        // Math proof (rect w=200, h=200, default anchor center (100,100), pos (250,250)):
+        //   shape.p = (100,100) → rect corners: (0,0)-(200,200)
+        //   T(-anchor) = T(-100,-100) → corners: (-100,-100)-(100,100)
+        //   T(pos) → corners: (150,150)-(350,350) ✓
+        //
+        // After anchor change to top-left (0,0), pos compensated to (150,150):
+        //   shape.p = (100,100) still → rect corners: (0,0)-(200,200)
+        //   T(-anchor) = T(0,0) → corners: (0,0)-(200,200)
+        //   T(pos) → corners: (150,150)-(350,350) ✓ (same visual position!)
 
         if (node.type === 'rect') {
             const w = LottieExporter.safeNum(node.props?.width, 100);
             const h = LottieExporter.safeNum(node.props?.height, 100);
-            const px = isLayerRoot ? LottieExporter.safeNum(layerRootAnchor!.x) : LottieExporter.safeNum(node.transform?.x, 0);
-            const py = isLayerRoot ? LottieExporter.safeNum(layerRootAnchor!.y) : LottieExporter.safeNum(node.transform?.y, 0);
+            // Layer-root: shape center is always at geometric center (w/2, h/2)
+            const px = isLayerRoot ? LottieExporter.safeNum(w / 2) : LottieExporter.safeNum(node.transform?.x, 0);
+            const py = isLayerRoot ? LottieExporter.safeNum(h / 2) : LottieExporter.safeNum(node.transform?.y, 0);
             const pAnimX = isLayerRoot ? undefined : node.animations?.['transform.x'];
             const pAnimY = isLayerRoot ? undefined : node.animations?.['transform.y'];
             pathItem = {
@@ -666,8 +713,9 @@ export class LottieExporter {
         } else if (node.type === 'ellipse') {
             const rx = LottieExporter.safeNum(node.props?.radiusX, 50);
             const ry = LottieExporter.safeNum(node.props?.radiusY, 50);
-            const px = isLayerRoot ? LottieExporter.safeNum(layerRootAnchor!.x) : LottieExporter.safeNum(node.transform?.x, 0);
-            const py = isLayerRoot ? LottieExporter.safeNum(layerRootAnchor!.y) : LottieExporter.safeNum(node.transform?.y, 0);
+            // Layer-root: ellipse center is at (rx, ry) in the editor's 0,0-to-2rx,2ry local space
+            const px = isLayerRoot ? LottieExporter.safeNum(rx) : LottieExporter.safeNum(node.transform?.x, 0);
+            const py = isLayerRoot ? LottieExporter.safeNum(ry) : LottieExporter.safeNum(node.transform?.y, 0);
             const pAnimX = isLayerRoot ? undefined : node.animations?.['transform.x'];
             const pAnimY = isLayerRoot ? undefined : node.animations?.['transform.y'];
             pathItem = {
@@ -677,8 +725,9 @@ export class LottieExporter {
             };
             if (pathItem.p.a === 0 && Array.isArray(pathItem.p.k) && pathItem.p.k.every((v: number) => v === 0)) delete pathItem.p;
         } else if (node.type === 'polystar') {
-            const px = isLayerRoot ? LottieExporter.safeNum(layerRootAnchor!.x) : LottieExporter.safeNum(node.transform?.x, 0);
-            const py = isLayerRoot ? LottieExporter.safeNum(layerRootAnchor!.y) : LottieExporter.safeNum(node.transform?.y, 0);
+            // Layer-root: polystar is inherently centered at origin (0,0)
+            const px = isLayerRoot ? 0 : LottieExporter.safeNum(node.transform?.x, 0);
+            const py = isLayerRoot ? 0 : LottieExporter.safeNum(node.transform?.y, 0);
             const pAnimX = isLayerRoot ? undefined : node.animations?.['transform.x'];
             const pAnimY = isLayerRoot ? undefined : node.animations?.['transform.y'];
             pathItem = {
@@ -967,62 +1016,233 @@ export class LottieExporter {
      * are left completely untouched so keyframe sequences are preserved.
      * Returns a new array (never mutates _rawLottieData).
      */
-    private static overlayStyleOnShapes(shapes: any[], style: Style): any[] {
-        const hasFillOverride = style.fillVisible !== false && !!style.fill && style.fillType !== 'gradient';
-        const hasStrokeOverride = !!style.stroke && (style.strokeWidth ?? 0) > 0 && style.strokeType !== 'gradient';
-        const hasTrimOverride = (style.trimStart ?? 0) !== 0 || (style.trimEnd ?? 1) !== 1 || (style.trimOffset ?? 0) !== 0;
+    private static overlayStyleOnShapes(shapes: any[], fallbackNode: SceneNode | null, nodes: Map<string, SceneNode>, fallbackFillEdited: boolean = false, fallbackStrokeEdited: boolean = false, fallbackTrimEdited: boolean = false): any[] {
+        let lastSeenShapeNode: SceneNode | null = null;
+        let lastSeenFillEdited = false;
+        let lastSeenStrokeEdited = false;
+        let lastSeenTrimEdited = false;
+        let processedTmForLastShape = false;
 
-        if (!hasFillOverride && !hasStrokeOverride && !hasTrimOverride) return shapes;
-
-        return shapes.map(item => {
+        const mappedShapes = shapes.map(item => {
             if (!item) return item;
+
+            // Resolve the active node if tagged
+            let activeNode: SceneNode | undefined = undefined;
+            if (item._creatorId && nodes.has(item._creatorId)) {
+                activeNode = nodes.get(item._creatorId);
+            }
 
             // Recurse into shape groups
             if (item.ty === 'gr' && Array.isArray(item.it)) {
-                return { ...item, it: LottieExporter.overlayStyleOnShapes(item.it, style) };
+                let groupFillEdited = fallbackFillEdited;
+                let groupStrokeEdited = fallbackStrokeEdited;
+                let groupTrimEdited = fallbackTrimEdited;
+                let groupNode = fallbackNode;
+
+                if (activeNode) {
+                    groupNode = activeNode;
+                    if (activeNode._originalParsedFill !== undefined) {
+                        const hasFillAnim = (activeNode.animations?.['style.fill']?.length ?? 0) > 0 || (activeNode.animations?.['style.fillOpacity']?.length ?? 0) > 0;
+                        groupFillEdited = hasFillAnim || (!!activeNode.style.fill && activeNode.style.fill !== activeNode._originalParsedFill);
+                        
+                        const hasStrokeAnim = (activeNode.animations?.['style.stroke']?.length ?? 0) > 0 || (activeNode.animations?.['style.strokeWidth']?.length ?? 0) > 0 || (activeNode.animations?.['style.strokeOpacity']?.length ?? 0) > 0;
+                        groupStrokeEdited = hasStrokeAnim || (!!activeNode.style.stroke && activeNode.style.stroke !== activeNode._originalParsedStroke) ||
+                                            ((activeNode.style.strokeWidth ?? 0) > 0 && activeNode.style.strokeWidth !== activeNode._originalParsedStrokeWidth);
+                    }
+                    
+                    const hasTrimAnim = (activeNode.animations?.['style.trimStart']?.length ?? 0) > 0 ||
+                                        (activeNode.animations?.['style.trimEnd']?.length ?? 0) > 0 ||
+                                        (activeNode.animations?.['style.trimOffset']?.length ?? 0) > 0;
+                    groupTrimEdited = hasTrimAnim || (activeNode.style.trimStart ?? 0) !== 0 || (activeNode.style.trimEnd ?? 1) !== 1 || (activeNode.style.trimOffset ?? 0) !== 0;
+                }
+
+                let newIt = LottieExporter.overlayStyleOnShapes(item.it, groupNode, nodes, groupFillEdited, groupStrokeEdited, groupTrimEdited);
+
+                // Phase 3b for nested groups: Inject trim path if the group was edited but had no tm item natively
+                if (groupTrimEdited && groupNode) {
+                    const hasTm = newIt.some((s: any) => s?.ty === 'tm');
+                    if (!hasTm) {
+                        const ts = groupNode.style.trimStart ?? 0;
+                        const te = groupNode.style.trimEnd ?? 1;
+                        const to = groupNode.style.trimOffset ?? 0;
+                        // Prepend before the transform item (tr) if it exists, otherwise append
+                        const trIndex = newIt.findIndex((s: any) => s?.ty === 'tr');
+                        const tmItem = {
+                            ty: 'tm', nm: 'Trim Paths',
+                            s: LottieExporter.mapProperty(ts * 100, groupNode.animations?.['style.trimStart']?.map(k => ({ ...k, value: k.value * 100 }))),
+                            e: LottieExporter.mapProperty(te * 100, groupNode.animations?.['style.trimEnd']?.map(k => ({ ...k, value: k.value * 100 }))),
+                            o: LottieExporter.mapProperty(to, groupNode.animations?.['style.trimOffset']),
+                            m: 1
+                        };
+                        if (trIndex >= 0) {
+                            newIt.splice(trIndex, 0, tmItem);
+                        } else {
+                            newIt.push(tmItem);
+                        }
+                    }
+                }
+
+                return { ...item, it: newIt };
             }
 
-            // Static solid fill — overlay color
-            if (hasFillOverride && item.ty === 'fl' && item.c?.a === 0) {
-                const rgb = LottieExporter.hexToRgbArray(style.fill!);
-                const existingK: number[] = item.c.k;
-                // Preserve format: some tools store [r,g,b], others [r,g,b,a]
-                const newK = existingK.length >= 4 ? [rgb[0], rgb[1], rgb[2], existingK[3]] : [rgb[0], rgb[1], rgb[2]];
-                const result: any = { ...item, c: { a: 0, k: newK } };
-                if (item.o?.a === 0 && style.fillOpacity !== undefined) {
-                    result.o = { a: 0, k: Math.round(LottieExporter.safeNum(style.fillOpacity) * 100) };
+            // Track nodes of the shapes we encounter before hitting the fill/stroke operators
+            if (item.ty === 'rc' || item.ty === 'el' || item.ty === 'sh' || item.ty === 'sr') {
+                if (activeNode) {
+                    lastSeenShapeNode = activeNode;
+                    if (activeNode._originalParsedFill !== undefined) {
+                        const hasFillAnim = (activeNode.animations?.['style.fill']?.length ?? 0) > 0 || (activeNode.animations?.['style.fillOpacity']?.length ?? 0) > 0;
+                        lastSeenFillEdited = hasFillAnim || (!!activeNode.style.fill && activeNode.style.fill !== activeNode._originalParsedFill);
+                        
+                        const hasStrokeAnim = (activeNode.animations?.['style.stroke']?.length ?? 0) > 0 || (activeNode.animations?.['style.strokeWidth']?.length ?? 0) > 0 || (activeNode.animations?.['style.strokeOpacity']?.length ?? 0) > 0;
+                        lastSeenStrokeEdited = hasStrokeAnim || (!!activeNode.style.stroke && activeNode.style.stroke !== activeNode._originalParsedStroke) ||
+                                            ((activeNode.style.strokeWidth ?? 0) > 0 && activeNode.style.strokeWidth !== activeNode._originalParsedStrokeWidth);
+                    } else {
+                        lastSeenFillEdited = false;
+                        lastSeenStrokeEdited = false;
+                    }
+                    
+                    const hasTrimAnim = (activeNode.animations?.['style.trimStart']?.length ?? 0) > 0 ||
+                                        (activeNode.animations?.['style.trimEnd']?.length ?? 0) > 0 ||
+                                        (activeNode.animations?.['style.trimOffset']?.length ?? 0) > 0;
+                    lastSeenTrimEdited = hasTrimAnim || (activeNode.style.trimStart ?? 0) !== 0 || (activeNode.style.trimEnd ?? 1) !== 1 || (activeNode.style.trimOffset ?? 0) !== 0;
+                    processedTmForLastShape = false;
                 }
-                if (style.fillRule !== undefined) result.r = style.fillRule === 'evenodd' ? 2 : 1;
-                return result;
+                return item;
             }
 
-            // Static solid stroke — overlay color and width
-            if (hasStrokeOverride && item.ty === 'st' && item.c?.a === 0) {
-                const rgb = LottieExporter.hexToRgbArray(style.stroke!);
-                const existingK: number[] = item.c.k;
-                const newK = existingK.length >= 4 ? [rgb[0], rgb[1], rgb[2], existingK[3]] : [rgb[0], rgb[1], rgb[2]];
-                const result: any = { ...item, c: { a: 0, k: newK } };
-                if (item.w?.a === 0 && style.strokeWidth !== undefined) {
-                    result.w = { a: 0, k: LottieExporter.safeNum(style.strokeWidth) };
+            // Determine effective node and edit flags for operators (fl, st, tm)
+            const nodeToApply = lastSeenShapeNode || fallbackNode;
+            if (!nodeToApply) return item;
+
+            const isFillEdited = lastSeenShapeNode ? lastSeenFillEdited : fallbackFillEdited;
+            const isStrokeEdited = lastSeenShapeNode ? lastSeenStrokeEdited : fallbackStrokeEdited;
+            const isTrimEdited = lastSeenShapeNode ? lastSeenTrimEdited : fallbackTrimEdited;
+
+            if (!isFillEdited && !isStrokeEdited && !isTrimEdited) return item;
+
+            // Fill — overlay color and keyframes
+            if (isFillEdited && item.ty === 'fl') {
+                const hasFillAnim = (nodeToApply.animations?.['style.fill']?.length ?? 0) > 0;
+                const hasOpacAnim = (nodeToApply.animations?.['style.fillOpacity']?.length ?? 0) > 0;
+
+                if (hasFillAnim || item.c?.a === 0) {
+                    const result: any = { ...item };
+                    result.c = LottieExporter.mapProperty(
+                        LottieExporter.hexToRgbArray(nodeToApply.style.fill!),
+                        nodeToApply.animations?.['style.fill']
+                    );
+                    
+                    if (hasOpacAnim || item.o?.a === 0 || nodeToApply.style.fillOpacity !== undefined) {
+                        result.o = LottieExporter.mapProperty(
+                            LottieExporter.safeNum(nodeToApply.style.fillOpacity ?? 1) * 100,
+                            nodeToApply.animations?.['style.fillOpacity']?.map(k => ({ ...k, value: k.value * 100 }))
+                        );
+                    }
+                    if (nodeToApply.style.fillRule !== undefined) result.r = nodeToApply.style.fillRule === 'evenodd' ? 2 : 1;
+                    return result;
                 }
-                if (item.o?.a === 0 && style.strokeOpacity !== undefined) {
-                    result.o = { a: 0, k: Math.round(LottieExporter.safeNum(style.strokeOpacity) * 100) };
-                }
-                return result;
             }
 
-            // Static trim path — overlay start/end/offset
-            if (hasTrimOverride && item.ty === 'tm' && item.s?.a === 0 && item.e?.a === 0) {
-                return {
-                    ...item,
-                    s: { a: 0, k: LottieExporter.safeNum((style.trimStart ?? 0) * 100) },
-                    e: { a: 0, k: LottieExporter.safeNum((style.trimEnd ?? 1) * 100) },
-                    o: { a: 0, k: LottieExporter.safeNum(style.trimOffset ?? 0) },
-                };
+            // Stroke — overlay color, width and keyframes
+            if (isStrokeEdited && item.ty === 'st') {
+                const hasStrokeAnim = (nodeToApply.animations?.['style.stroke']?.length ?? 0) > 0;
+                const hasWidthAnim = (nodeToApply.animations?.['style.strokeWidth']?.length ?? 0) > 0;
+                const hasOpacAnim = (nodeToApply.animations?.['style.strokeOpacity']?.length ?? 0) > 0;
+
+                const result: any = { ...item };
+                let modified = false;
+
+                if (hasStrokeAnim || item.c?.a === 0) {
+                    result.c = LottieExporter.mapProperty(
+                        LottieExporter.hexToRgbArray(nodeToApply.style.stroke!),
+                        nodeToApply.animations?.['style.stroke']
+                    );
+                    modified = true;
+                }
+                
+                if (hasWidthAnim || item.w?.a === 0 || nodeToApply.style.strokeWidth !== undefined) {
+                    result.w = LottieExporter.mapProperty(
+                        LottieExporter.safeNum(nodeToApply.style.strokeWidth),
+                        nodeToApply.animations?.['style.strokeWidth']
+                    );
+                    modified = true;
+                }
+                
+                if (hasOpacAnim || item.o?.a === 0 || nodeToApply.style.strokeOpacity !== undefined) {
+                    result.o = LottieExporter.mapProperty(
+                        Math.round(LottieExporter.safeNum(nodeToApply.style.strokeOpacity ?? 1) * 100),
+                        nodeToApply.animations?.['style.strokeOpacity']?.map(k => ({ ...k, value: k.value * 100 }))
+                    );
+                    modified = true;
+                }
+
+                if (modified) return result;
+            }
+
+            // Trim path — overlay start/end/offset and keyframes
+            if (isTrimEdited && item.ty === 'tm') {
+                processedTmForLastShape = true;
+                const hasStartAnim = (nodeToApply.animations?.['style.trimStart']?.length ?? 0) > 0;
+                const hasEndAnim = (nodeToApply.animations?.['style.trimEnd']?.length ?? 0) > 0;
+                const hasOffsetAnim = (nodeToApply.animations?.['style.trimOffset']?.length ?? 0) > 0;
+
+                const result: any = { ...item };
+                let modified = false;
+
+                if (hasStartAnim || item.s?.a === 0) {
+                    result.s = LottieExporter.mapProperty(
+                        LottieExporter.safeNum((nodeToApply.style.trimStart ?? 0) * 100),
+                        nodeToApply.animations?.['style.trimStart']?.map(k => ({ ...k, value: k.value * 100 }))
+                    );
+                    modified = true;
+                }
+
+                if (hasEndAnim || item.e?.a === 0) {
+                    result.e = LottieExporter.mapProperty(
+                        LottieExporter.safeNum((nodeToApply.style.trimEnd ?? 1) * 100),
+                        nodeToApply.animations?.['style.trimEnd']?.map(k => ({ ...k, value: k.value * 100 }))
+                    );
+                    modified = true;
+                }
+
+                if (hasOffsetAnim || item.o?.a === 0) {
+                    result.o = LottieExporter.mapProperty(
+                        LottieExporter.safeNum(nodeToApply.style.trimOffset ?? 0),
+                        nodeToApply.animations?.['style.trimOffset']
+                    );
+                    modified = true;
+                }
+
+                if (modified) return result;
             }
 
             return item;
         });
+
+        // If a shape had trim edits but no tm item followed it in the original JSON, inject one now
+        const node = lastSeenShapeNode as any;
+        if (lastSeenTrimEdited && !processedTmForLastShape && node) {
+            const ts = node.style.trimStart ?? 0;
+            const te = node.style.trimEnd ?? 1;
+            const to = node.style.trimOffset ?? 0;
+            const tmItem = {
+                ty: 'tm', nm: 'Trim Paths',
+                s: LottieExporter.mapProperty(ts * 100, node.animations?.['style.trimStart']?.map((k: any) => ({ ...k, value: k.value * 100 }))),
+                e: LottieExporter.mapProperty(te * 100, node.animations?.['style.trimEnd']?.map((k: any) => ({ ...k, value: k.value * 100 }))),
+                o: LottieExporter.mapProperty(to, node.animations?.['style.trimOffset']),
+                m: 1
+            };
+            
+            // Append before the transform item (tr) if it exists, otherwise append at the end
+            const trIndex = mappedShapes.findIndex((s: any) => s?.ty === 'tr');
+            if (trIndex >= 0) {
+                mappedShapes.splice(trIndex, 0, tmItem);
+            } else {
+                mappedShapes.push(tmItem);
+            }
+        }
+
+        return mappedShapes;
     }
 
     /**

@@ -1425,6 +1425,7 @@ export class LottieParser {
                     animations: Object.fromEntries(Object.entries(currentAnimations).filter(([k]) => k.startsWith('style.') && k !== 'style.opacity'))
                 });
                 parentNode.children.push(groupNode.id);
+                (item as any)._creatorId = groupNode.id;
                 trackOnChild(groupNode);
                 createdNodesInThisScope.push(groupNode);
                 if (item.it) {
@@ -1469,6 +1470,7 @@ export class LottieParser {
 
                 this.realignNodeGradients(rect, rect.transform.x - rect.transform.anchorX, rect.transform.y - rect.transform.anchorY);
                 parentNode.children.push(rect.id);
+                (item as any)._creatorId = rect.id;
                 createdNodesInThisScope.push(rect);
                 trackOnChild(rect);
 
@@ -1515,6 +1517,7 @@ export class LottieParser {
 
                 this.realignNodeGradients(ellipse, ellipse.transform.x - ellipse.transform.anchorX, ellipse.transform.y - ellipse.transform.anchorY);
                 parentNode.children.push(ellipse.id);
+                (item as any)._creatorId = ellipse.id;
                 createdNodesInThisScope.push(ellipse);
                 trackOnChild(ellipse);
 
@@ -1579,6 +1582,7 @@ export class LottieParser {
                     outPoint: parentNode.outPoint
                 });
                 parentNode.children.push(path.id);
+                (item as any)._creatorId = path.id;
                 createdNodesInThisScope.push(path);
                 trackOnChild(path);
             }
@@ -1674,6 +1678,7 @@ export class LottieParser {
                     outPoint: parentNode.outPoint
                 });
                 parentNode.children.push(polypath.id);
+                (item as any)._creatorId = polypath.id;
                 createdNodesInThisScope.push(polypath);
                 trackOnChild(polypath);
             }
@@ -1821,6 +1826,14 @@ export class LottieParser {
         // Lottie shapes array is ordered front-to-back (first = topmost in layer panel),
         // but Canvas draws first items at the bottom. Reverse to get correct visual stacking.
         parentNode.children.reverse();
+
+        // Snapshot original styles for all nodes in this scope so the exporter can detect edits
+        createdNodesInThisScope.forEach(n => {
+            n._originalParsedFill = n.style.fill;
+            n._originalParsedStroke = n.style.stroke;
+            n._originalParsedStrokeWidth = n.style.strokeWidth;
+            n._originalParsedOpacity = n.style.opacity;
+        });
     }
 
     private static realignNodeGradients(node: SceneNode, originX: number, originY: number) {
