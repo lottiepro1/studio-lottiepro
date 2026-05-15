@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useEffect, useRef, memo } from 'react';
 import { useCreatorStore } from '@/lib/creator/state/store';
-import { ChevronRight, ChevronDown, Timer, Link2, Box, Circle, Layers, Diamond, Link as LinkIcon, HardDrive, Plus, X, Folder, Image as ImageIcon, Zap, Star, Layout, Component } from 'lucide-react';
+import { ChevronRight, ChevronDown, Timer, Link2, Box, Circle, Layers, Diamond, Link as LinkIcon, HardDrive, Plus, X, Folder, Image as ImageIcon, Zap, Star, Layout, Component, Square, PenTool, Type, MousePointer2 } from 'lucide-react';
 import { AnimationUtils } from '@/lib/creator/core/Animation';
 import { SceneNode } from '@/lib/creator/state/sceneSlice';
 import { getWorldMatrix, decomposeMatrix } from '@/lib/creator/core/Matrix';
@@ -49,6 +49,9 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
     const [animateMenuPos, setAnimateMenuPos] = useState({ x: 0, y: 0 });
     const [isAnimateMoreOpen, setIsAnimateMoreOpen] = useState(false);
     const animateMenuRef = useRef<HTMLDivElement>(null);
+    const [parentDropdownOpen, setParentDropdownOpen] = useState(false);
+    const [parentDropdownPos, setParentDropdownPos] = useState({ x: 0, y: 0, width: 0 });
+    const parentTriggerRef = useRef<HTMLButtonElement>(null);
 
     // Draggable popup logic
     const handleDragStartPopup = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -130,6 +133,16 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
             };
         }
     }, [isAnimateMenuOpen, isAnimateMoreOpen]);
+
+    useEffect(() => {
+        if (!parentDropdownOpen) return;
+        const close = (e: MouseEvent) => {
+            if (parentTriggerRef.current && parentTriggerRef.current.contains(e.target as Node)) return;
+            setParentDropdownOpen(false);
+        };
+        document.addEventListener('mousedown', close);
+        return () => document.removeEventListener('mousedown', close);
+    }, [parentDropdownOpen]);
 
     const isSelected = selectedIds.includes(node.id);
 
@@ -324,8 +337,16 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
             .sort((a, b) => a.name.localeCompare(b.name));
     }, [node.id]);
 
+    // Design tokens (Figma 2001-1051)
+    const ROW_BG     = isSelected ? 'rgba(221,234,248,0.30)' : dropPosition === 'inside' ? 'rgba(221,234,248,0.20)' : 'rgba(221,234,248,0.08)';
+    const TEXT_COLOR = 'rgba(241,247,254,0.71)';
+    const ICON_COLOR = '#808B9D';
+    const SEL_BG     = 'rgba(0,0,0,0.25)';
+    const SEL_BD     = 'rgba(217,237,255,0.25)';
+    const SEL_TEXT   = 'rgba(229,237,253,0.48)';
+
     return (
-        <div data-track-id={node.id} className="flex flex-col border-b border-white/[0.02]">
+        <div data-track-id={node.id} className="flex flex-col">
             <div
                 ref={itemRef}
                 draggable={node.type !== 'artboard'}
@@ -334,141 +355,161 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
                 onDragOver={onDragOver}
                 onDragLeave={onDragLeave}
                 onDrop={onDrop}
-                className={`flex items-center group transition-all duration-200 cursor-default relative border-b border-white/[0.04] ${isSelected ? 'bg-accent/10' : 'hover:bg-white/[0.04]'} ${dropPosition === 'inside' ? 'bg-accent/15' : ''}`}
-                style={{ height: rowHeight }}
+                className="flex items-center cursor-default relative transition-colors"
+                style={{ height: rowHeight, background: ROW_BG, borderRadius: 4 }}
                 onMouseDownCapture={(e) => {
                     const target = e.target as HTMLElement;
-                    // If clicking inside the animate popup, don't hijack the event
-                    if (target.closest('.animate-popup')) {
-                        return;
-                    }
-
-                    // Start selection
+                    if (target.closest('.animate-popup')) return;
                     e.stopPropagation();
                     const isInteractive = target.closest('button') || target.closest('select') || target.closest('input');
-
-                    // If clicking interactive element on a node that is ALREADY part of selection, 
-                    // DON'T run onSelect (which would reset selection to just this one node)
-                    if (isInteractive && isSelected) {
-                        return;
-                    }
-
+                    if (isInteractive && isSelected) return;
                     onSelect(e.shiftKey, e.ctrlKey || e.metaKey);
                 }}
             >
-                {/* Indentation Line Guide (Figma Style) */}
-                {depth > 0 && (
-                    <div
-                        className={`absolute left-0 top-0 bottom-0 border-l transition-colors duration-300 ${isSelected ? 'border-accent/30' : 'border-white/[0.08]'}`}
-                        style={{
-                            left: `${depth * 12 + 18}px`,
-                            height: '100%'
-                        }}
-                    />
-                )}
-
-                {/* Refined Drop Indicators (Figma Style) */}
+                {/* Drop indicators */}
                 {(dropPosition === 'before' || dropPosition === 'after') && (
-                    <div
-                        className={`absolute left-0 right-0 h-[2px] bg-accent z-[100] pointer-events-none ${dropPosition === 'before' ? 'top-0' : 'bottom-0'}`}
-                    >
-                        {/* Dot at the start of the line */}
-                        <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[6px] h-[6px] rounded-full bg-accent " />
+                    <div className={`absolute left-0 right-0 h-[2px] bg-accent z-[100] pointer-events-none ${dropPosition === 'before' ? 'top-0' : 'bottom-0'}`}>
+                        <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[6px] h-[6px] rounded-full bg-accent" />
                     </div>
                 )}
 
+                {/* Row content */}
                 <div
-                    className="flex items-center px-3 w-full h-full gap-2"
-                    style={{ paddingLeft: `${depth * 12 + 8}px` }}
+                    className="flex items-center w-full h-full"
+                    style={{ paddingLeft: `${depth * 12 + 12}px`, paddingRight: 4, gap: 12 }}
                 >
+                    {/* Chevron */}
                     <button
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            onToggleExpand();
-                        }}
-                        className={`p-1 rounded-md transition-all ${isExpanded ? 'text-white/60' : 'text-white/20 hover:text-white/60 hover:bg-white/10'}`}
+                        onClick={(e) => { e.stopPropagation(); onToggleExpand(); }}
+                        className="w-4 h-4 flex items-center justify-center shrink-0 transition-colors"
+                        style={{ color: ICON_COLOR }}
                     >
-                        {isExpanded ? <ChevronDown size={12} strokeWidth={3} /> : <ChevronRight size={12} strokeWidth={3} />}
+                        <ChevronRight
+                            size={14}
+                            strokeWidth={1.75}
+                            className={`transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`}
+                        />
                     </button>
 
-                    <div className="flex items-center gap-2.5 flex-1 min-w-0">
-                        <div className={`shrink-0 w-5 h-5 rounded flex items-center justify-center transition-all duration-300 ${isSelected
-                                ? 'bg-white/20 shadow-[0_0_10px_rgba(255,255,255,0.1)]'
-                                : 'bg-white/[0.03] group-hover:bg-white/10'
-                            }`}>
-                            {(() => {
-                                const isTopLevel = parentNode?.type === 'artboard' || !parentNode;
-
-                                if (node.type === 'artboard') return <Layout size={12} className="text-blue-400" />;
-                                if (node.type === 'group') {
-                                    if (isTopLevel) return <Layers size={12} className="text-orange-400 drop-shadow-[0_0_3px_rgba(251,146,60,0.4)]" />;
-                                    return <Folder size={11} className="text-amber-400/80" />;
-                                }
-                                if (node.type === 'rect') return <Box size={12} className="text-accent" />;
-                                if (node.type === 'ellipse') return <Circle size={12} className="text-purple-400" />;
-                                if (node.type === 'path') return <Star size={11} strokeWidth={2.5} className="text-emerald-400" />;
-                                if (node.type === 'image') return <ImageIcon size={11} className="text-cyan-400" />;
-                                if (node.type === 'precomp') return <Zap size={11} className="text-indigo-400" />;
-
-                                return <Layers size={12} className="text-white/40" />;
-                            })()}
-                        </div>
-                        <span className={`text-[11px] font-medium truncate transition-colors ${isSelected ? 'text-primary' : 'text-secondary group-hover:text-primary'}`}>{node.name}</span>
-
-                        {/* Matte indicators */}
-                        {node.matteTargetIds && node.matteTargetIds.length > 0 && (
-                            <span className="text-[8px] text-purple-400/80 bg-purple-500/10 px-1.5 py-0.5 rounded uppercase tracking-wider">Mask</span>
+                    {/* Layer type icon — matches LayerItem.tsx */}
+                    <div
+                        className="shrink-0 flex items-center justify-center"
+                        style={{ width: 16, height: 16, color: node.type === 'precomp' ? '#627FE8' : ICON_COLOR }}
+                    >
+                        {node.type === 'rect'    && <Square      size={14} strokeWidth={1.75} />}
+                        {node.type === 'ellipse' && <Circle      size={14} strokeWidth={1.75} />}
+                        {node.type === 'path'    && <PenTool     size={14} strokeWidth={1.75} />}
+                        {node.type === 'text'    && <Type        size={14} strokeWidth={1.75} />}
+                        {node.type === 'image'   && <ImageIcon   size={14} strokeWidth={1.75} />}
+                        {node.type === 'precomp' && <Box         size={14} strokeWidth={1.75} />}
+                        {node.type === 'group'   && (
+                            node.mergeMode && node.mergeMode !== 'none'
+                                ? <span className="text-[9px] font-bold leading-none" style={{ color: '#627FE8' }}>
+                                    {({ union: '∪', subtract: '−', intersect: '∩', exclude: '⊞' } as any)[node.mergeMode]}
+                                  </span>
+                                : <Folder size={14} strokeWidth={1.75} />
                         )}
-                        {node.matteSourceId && (
-                            <span className="text-[8px] text-cyan-400/80 bg-cyan-500/10 px-1.5 py-0.5 rounded uppercase tracking-wider">Clipped</span>
-                        )}
+                        {!['rect','ellipse','path','text','image','precomp','group'].includes(node.type) && <MousePointer2 size={14} strokeWidth={1.75} />}
                     </div>
 
-                    {/* Parenting Dropdown (AE Style) */}
-                    <div className="shrink-0 flex items-center gap-1.5 border-l border-white/5 pl-3 ml-2">
-                        <div className="flex items-center group/parent relative">
-                            <LinkIcon size={10} className={`transition-colors ${node.parentLayerId ? 'text-accent' : 'text-white/10 group-hover/parent:text-white/40'}`} />
-                            <select
-                                value={node.parentLayerId || ""}
-                                onChange={(e) => handleSetParent(e.target.value || null)}
-                                className="appearance-none bg-transparent text-[10px] font-bold text-white/30 hover:text-white/70 outline-none cursor-pointer pl-1 pr-4 max-w-[80px] truncate"
-                            >
-                                <option value="" className="bg-[#18181b]">None</option>
-                                {potentialParents.map(p => (
-                                    <option key={p.id} value={p.id} className="bg-[#18181b]">{p.name}</option>
-                                ))}
-                            </select>
-                            <div className="absolute right-0 pointer-events-none opacity-20">
-                                <ChevronDown size={8} />
-                            </div>
-                        </div>
+                    {/* Layer name */}
+                    <span className="text-[13px] truncate flex-1 min-w-0" style={{ color: TEXT_COLOR, fontWeight: 400 }}>
+                        {node.name}
+                    </span>
+
+                    {/* Parent / link select (100px, Figma: Select Trigger) — custom dropdown */}
+                    <div className="shrink-0 relative" style={{ width: 100 }}>
                         <button
-                            data-animate-trigger="true"
+                            ref={parentTriggerRef}
                             onClick={(e) => {
                                 e.stopPropagation();
-                                if (!isAnimateMenuOpen) {
-                                    const rect = e.currentTarget.getBoundingClientRect();
-                                    const menuWidth = 192; // w-48
-                                    let x = rect.right + 10;
-                                    let y = rect.top - 10;
-
-                                    // Viewport boundary checks
-                                    if (x + menuWidth > window.innerWidth) x = rect.left - menuWidth - 10;
-                                    if (y + 400 > window.innerHeight) y = Math.max(10, window.innerHeight - 410);
-
-                                    setAnimateMenuPos({ x, y });
-                                    setIsAnimateMenuOpen(true);
-                                    setIsAnimateMoreOpen(false);
-                                } else {
-                                    setIsAnimateMenuOpen(false);
+                                if (!parentDropdownOpen) {
+                                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                                    setParentDropdownPos({ x: rect.left, y: rect.bottom + 2, width: rect.width });
                                 }
+                                setParentDropdownOpen(v => !v);
                             }}
-                            className={`p-1 rounded transition-colors ${isAnimateMenuOpen ? 'bg-accent/15 text-accent' : 'text-muted hover:text-secondary hover:bg-hover'}`}
-                            title="Animate Properties"
+                            className="flex items-center justify-between w-full h-6 px-2 rounded-[3px] transition-colors hover:opacity-80"
+                            style={{ background: SEL_BG, border: `1px solid ${SEL_BD}` }}
                         >
-                            <Plus size={12} strokeWidth={3} />
+                            <span className="truncate flex-1 text-left" style={{ color: SEL_TEXT, fontSize: 12, lineHeight: '16px' }}>
+                                {node.parentLayerId ? (potentialParents.find(p => p.id === node.parentLayerId)?.name ?? 'None') : 'None'}
+                            </span>
+                            <ChevronDown size={10} style={{ color: SEL_TEXT, flexShrink: 0 }} />
                         </button>
+
+                        {parentDropdownOpen && (
+                            <div
+                                className="fixed z-[9999] rounded-[6px] overflow-hidden py-1"
+                                style={{
+                                    left: parentDropdownPos.x,
+                                    top: parentDropdownPos.y,
+                                    minWidth: parentDropdownPos.width,
+                                    maxWidth: 200,
+                                    maxHeight: 240,
+                                    overflowY: 'auto',
+                                    background: '#27292C',
+                                    border: '1px solid rgba(221,234,248,0.08)',
+                                    boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                                }}
+                                onMouseDown={(e) => e.stopPropagation()}
+                            >
+                                {[{ id: '', name: 'None' }, ...potentialParents].map(p => {
+                                    const isActive = (node.parentLayerId || '') === p.id;
+                                    return (
+                                        <button
+                                            key={p.id}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleSetParent(p.id || null);
+                                                setParentDropdownOpen(false);
+                                            }}
+                                            className="w-full text-left px-3 py-1.5 text-[12px] transition-colors hover:bg-white/10"
+                                            style={{ color: isActive ? 'var(--accent)' : 'rgba(241,247,254,0.71)' }}
+                                        >
+                                            {p.name}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
                     </div>
+
+                    {/* Animate / keyframe button (+) — accent when layer has any keyframes */}
+                    {(() => {
+                        const hasAnimations = !!node.animations && Object.values(node.animations).some((arr: any) => arr && arr.length > 0);
+                        const isActive = isAnimateMenuOpen || hasAnimations;
+                        return (
+                            <button
+                                data-animate-trigger="true"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!isAnimateMenuOpen) {
+                                        const rect = e.currentTarget.getBoundingClientRect();
+                                        const menuWidth = 192;
+                                        let x = rect.right + 10;
+                                        let y = rect.top - 10;
+                                        if (x + menuWidth > window.innerWidth) x = rect.left - menuWidth - 10;
+                                        if (y + 400 > window.innerHeight) y = Math.max(10, window.innerHeight - 410);
+                                        setAnimateMenuPos({ x, y });
+                                        setIsAnimateMenuOpen(true);
+                                        setIsAnimateMoreOpen(false);
+                                    } else {
+                                        setIsAnimateMenuOpen(false);
+                                    }
+                                }}
+                                className="w-6 h-6 flex items-center justify-center rounded transition-colors shrink-0"
+                                style={{
+                                    color: isActive ? 'var(--accent)' : ICON_COLOR,
+                                    background: isActive ? 'rgba(var(--accent-rgb),0.15)' : 'transparent',
+                                    border: hasAnimations && !isAnimateMenuOpen ? '1px solid rgba(var(--accent-rgb),0.35)' : '1px solid transparent',
+                                }}
+                                title="Animate Properties"
+                            >
+                                <Plus size={14} strokeWidth={2} />
+                            </button>
+                        );
+                    })()}
                 </div>
 
                 {/* Animate Properties Popover */}
@@ -658,8 +699,8 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
                         return (
                             <div
                                 key={group.mainPath}
-                                className="flex items-center hover:bg-white/[0.05] transition-colors bg-black/20 pr-3 border-t border-white/[0.01]"
-                                style={{ height: rowHeight, paddingLeft: `${depth * 12 + 40}px` }}
+                                className="flex items-center transition-colors"
+                                style={{ height: rowHeight, paddingLeft: `${depth * 12 + 40}px`, paddingRight: 8, background: 'rgba(221,234,248,0.04)', borderRadius: 4 }}
                             >
                                 <button
                                     onClick={() => {
@@ -681,7 +722,7 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
                                     <Diamond size={10} fill={hasKfAtCurrentTime ? "currentColor" : "none"} className={hasKfAtCurrentTime ? "" : ""} />
                                 </button>
                                 <div className="flex-1 flex items-center justify-between min-w-0">
-                                    <span className="text-[10px] font-bold text-white/30 truncate tracking-tight uppercase">{group.label}</span>
+                                    <span className="text-[11px] font-medium truncate" style={{ color: 'rgba(241,247,254,0.40)' }}>{group.label}</span>
                                     <div className="flex items-center gap-2 ml-2 shrink-0">
                                         {group.hasLink && (
                                             <button
@@ -729,14 +770,14 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
                             {shapeGroups.length > 0 && (
                                 <>
                                     <div
-                                        className="flex items-center hover:bg-white/[0.05] transition-colors bg-black/30 pr-3 border-t border-white/[0.02] cursor-pointer"
-                                        style={{ height: rowHeight, paddingLeft: `${depth * 12 + 24}px` }}
+                                        className="flex items-center cursor-pointer transition-colors rounded"
+                                        style={{ height: rowHeight, paddingLeft: `${depth * 12 + 24}px`, paddingRight: 8, background: 'rgba(221,234,248,0.04)' }}
                                         onClick={() => toggleShapeGroupExpand(node.id)}
                                     >
-                                        <button className="p-1 mr-1 text-white/20">
-                                            {isShapeGroupExpanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                                        <button className="p-1 mr-1 transition-colors" style={{ color: 'rgba(241,247,254,0.30)' }}>
+                                            <ChevronRight size={12} strokeWidth={1.75} className={`transition-transform duration-150 ${isShapeGroupExpanded ? 'rotate-90' : ''}`} />
                                         </button>
-                                        <span className="text-[10px] text-muted uppercase tracking-widest pl-1">Transform Shape</span>
+                                        <span className="text-[11px] font-medium" style={{ color: 'rgba(241,247,254,0.40)' }}>Transform Shape</span>
                                     </div>
                                     {isShapeGroupExpanded && shapeGroups.map(renderGroupRow)}
                                 </>

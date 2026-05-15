@@ -245,42 +245,36 @@ const TimelineKeyframeTrack = memo(function TimelineKeyframeTrack({
         else document.body.style.cursor = 'ew-resize';
     };
 
+    // Track bar: selected = lighter grey, unselected = grey. Keyframe indicator lives on sidebar '+' button.
+    const barBg = isSelected ? '#ACB0B8' : '#808B9D';
+
     return (
-        <div data-track-id={node.id} className="flex flex-col border-b border-white/[0.02]">
+        <div data-track-id={node.id} className="flex flex-col">
             {/* Node Main Row - Layer Bar */}
             <div
                 className="relative group/row"
                 style={{ height: rowHeight }}
             >
-                {/* Visual Bar - Only render for root level nodes (depth === 0) */}
+                {/* Visual bar — spans in-point to out-point */}
                 {depth === 0 && (
                     <div
-                        className={`absolute top-2 bottom-2 rounded-[4px] border flex items-center transition-all duration-150 cursor-grab active:cursor-grabbing shadow-lg ${isSelected
-                            ? 'bg-emerald-500/40 border-emerald-400/50'
-                            : 'bg-emerald-600/20 border-emerald-500/20 group-hover/row:bg-emerald-500/30'
-                            }`}
+                        className="absolute top-[2px] bottom-[2px] rounded-[4px] flex items-center cursor-grab active:cursor-grabbing transition-opacity duration-150 hover:opacity-90"
                         style={{
                             left: node.inPoint * pixelsPerFrame,
-                            width: (node.outPoint - node.inPoint) * pixelsPerFrame,
+                            width: Math.max(4, (node.outPoint - node.inPoint) * pixelsPerFrame),
+                            background: barBg,
                         }}
                         onMouseDown={(e) => handleBarMouseDown(e, 'shift')}
                     >
-                        {/* Trim Handles */}
+                        {/* Trim handles */}
                         <div
-                            className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-white/20 rounded-l-[4px] border-r border-white/10"
+                            className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize rounded-l-[4px] hover:bg-black/20"
                             onMouseDown={(e) => { e.stopPropagation(); handleBarMouseDown(e, 'trim-in'); }}
                         />
                         <div
-                            className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-white/20 rounded-r-[4px] border-l border-white/10"
+                            className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize rounded-r-[4px] hover:bg-black/20"
                             onMouseDown={(e) => { e.stopPropagation(); handleBarMouseDown(e, 'trim-out'); }}
                         />
-
-                        {/* Center dots/texture for grip feel */}
-                        <div className="flex-1 h-full flex items-center justify-center opacity-20 pointer-events-none overflow-hidden">
-                            <div className="flex gap-1">
-                                {[1, 2, 3].map(i => <div key={i} className="w-0.5 h-0.5 rounded-full bg-white" />)}
-                            </div>
-                        </div>
                     </div>
                 )}
             </div>
@@ -302,8 +296,8 @@ const TimelineKeyframeTrack = memo(function TimelineKeyframeTrack({
                 const renderGroupTrack = (group: any) => (
                     <div
                         key={group.mainPath}
-                        className="relative border-t border-white/[0.02] bg-white/[0.01]"
-                        style={{ height: rowHeight }}
+                        className="relative"
+                        style={{ height: rowHeight, background: 'rgba(221,234,248,0.03)', borderRadius: 4 }}
                     >
                         {renderGroupKeyframes(group.props.map((p: any) => p.path))}
                     </div>
@@ -321,10 +315,10 @@ const TimelineKeyframeTrack = memo(function TimelineKeyframeTrack({
 
                         {shapeGroups.length > 0 && (
                             <>
-                                {/* Group Header Row (Empty in keyframe area) */}
+                                {/* Group header row — empty spacer in keyframe area */}
                                 <div
-                                    className="relative border-t border-white/[0.02] bg-white/[0.02]"
-                                    style={{ height: rowHeight }}
+                                    className="relative"
+                                    style={{ height: rowHeight, background: 'rgba(221,234,248,0.03)', borderRadius: 4 }}
                                 />
                                 {isShapeGroupExpanded && shapeGroups.map(renderGroupTrack)}
                             </>

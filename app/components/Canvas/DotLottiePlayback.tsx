@@ -75,6 +75,10 @@ export function DotLottiePlayback({
   const lastZustandUpdateMs = useRef(0);
   // Debounce timer for live sync
   const liveReloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Snapshot overlay: img element shown during dl.load() to hide the ThorVG flash
+  const overlayImgRef = useRef<HTMLImageElement | null>(null);
+  // rAF used to hide the overlay exactly one frame after ThorVG commits the new frame
+  const afterLoadRafRef = useRef<number | null>(null);
 
   // --- Export / load caches (Tier 2) ---
   // exportCache: last LottieExporter output, keyed by updateCounter
@@ -98,6 +102,35 @@ export function DotLottiePlayback({
   const dprRef = useRef(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1);
   // Track last zoom used to size the canvas so we only resize when it actually changes
   const lastCanvasZoomRef = useRef<number>(0);
+
+  // Capture the current ThorVG frame to an <img> overlay so the canvas appears frozen
+  // (rather than flashing through frame-0 then frame-1) while WASM rebuilds the scene.
+  const showSnapshotOverlay = () => {
+    const canvas = canvasRef.current;
+    const overlay = overlayImgRef.current;
+    if (!canvas || !overlay) return;
+    try {
+      const dataUrl = canvas.toDataURL();
+      // 'data:,' is what browsers return for a blank/uninitialized canvas — skip it
+      if (dataUrl && dataUrl !== 'data:,') {
+        overlay.src = dataUrl;
+        overlay.style.display = 'block';
+      }
+    } catch {
+      // Canvas may be unreadable (cross-origin content or WebGL without preserveDrawingBuffer).
+      // Silent failure is fine — the load still happens, just without the seamless overlay.
+    }
+  };
+
+  // Hide the overlay one rAF after setFrame() so ThorVG has committed the new frame to the
+  // GPU before we remove the overlay. Removing it any earlier risks showing a blank canvas.
+  const hideSnapshotOverlay = () => {
+    if (afterLoadRafRef.current !== null) cancelAnimationFrame(afterLoadRafRef.current);
+    afterLoadRafRef.current = requestAnimationFrame(() => {
+      afterLoadRafRef.current = null;
+      if (overlayImgRef.current) overlayImgRef.current.style.display = 'none';
+    });
+  };
 
   const makeDlConfig = () => ({
     autoplay: false,
@@ -215,6 +248,9 @@ export function DotLottiePlayback({
         dl.setFrame(1);
       }
       dl.setFrame(targetFrame);
+      // New frame is now queued in ThorVG — hide the snapshot overlay one rAF later
+      // so the GPU has flushed the new frame before we reveal the canvas.
+      hideSnapshotOverlay();
       if (pendingPlay.current) {
         pendingPlay.current = false;
         dl.play();
@@ -260,6 +296,11 @@ export function DotLottiePlayback({
         clearTimeout(liveReloadTimer.current);
         liveReloadTimer.current = null;
       }
+      if (afterLoadRafRef.current !== null) {
+        cancelAnimationFrame(afterLoadRafRef.current);
+        afterLoadRafRef.current = null;
+      }
+      if (overlayImgRef.current) overlayImgRef.current.style.display = 'none';
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawAnimationSource, artboardWidth, artboardHeight]);
@@ -321,6 +362,7 @@ export function DotLottiePlayback({
       pendingLoadCounter.current = currentCounter;
       isInitialized.current = false;
       pendingLoadIsFreshExport.current = true;
+      showSnapshotOverlay();
       dl.load({ data: lottieData, ...makeDlConfig() });
       // dl.play() is called inside the 'load' event handler
     } catch (err) {
@@ -393,6 +435,7 @@ export function DotLottiePlayback({
           // call setLottieModel, as patchLottieNode may advance lottieModel further
           // between now and when the load event fires.
           pendingLoadIsFreshExport.current = false;
+          showSnapshotOverlay();
           dlCurrent.load({ data: model, ...makeDlConfig() });
         } catch (err) {
           console.warn('[DotLottiePlayback] Fast-path reload failed, falling back:', err);
@@ -411,6 +454,7 @@ export function DotLottiePlayback({
         isInitialized.current = false;
         // Slow path uses fresh LottieExporter output — setLottieModel should fire in load event.
         pendingLoadIsFreshExport.current = true;
+        showSnapshotOverlay();
         dlCurrent.load({ data: lottieData, ...makeDlConfig() });
       } catch (err) {
         console.warn('[DotLottiePlayback] Live edit sync failed:', err);
@@ -444,23 +488,46 @@ export function DotLottiePlayback({
   const cssHeight = artboardHeight * viewportZoom;
 
   return (
-    <canvas
-      ref={canvasRef}
-      style={{
-        display: visible ? 'block' : 'none',
-        position: 'absolute',
-        left: 0,
-        top: 0,
-        width: cssWidth,
-        height: cssHeight,
-        transform: `translate(${tx}px, ${ty}px)`,
-        transformOrigin: '0 0',
-        // z-21: above Canvas2D (z-20). ThorVG is always the sole renderer for animation content.
-        // Canvas2D (z-20) handles editor chrome only; skipLottieContent skips all artboard shapes.
-        zIndex: 21,
-        pointerEvents: 'none',
-        imageRendering: 'auto',
-      }}
-    />
+    <>
+      {/* Snapshot overlay: displays the last good ThorVG frame while WASM rebuilds the scene,
+          eliminating the frame-0 → frame-1 → target flash visible during dl.load(). Hidden by
+          default; shown imperatively in showSnapshotOverlay() and hidden in hideSnapshotOverlay(). */}
+      <img
+        ref={overlayImgRef}
+        alt=""
+        aria-hidden="true"
+        style={{
+          display: 'none',
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          width: cssWidth,
+          height: cssHeight,
+          transform: `translate(${tx}px, ${ty}px)`,
+          transformOrigin: '0 0',
+          zIndex: 22,
+          pointerEvents: 'none',
+          imageRendering: 'auto',
+        }}
+      />
+      <canvas
+        ref={canvasRef}
+        style={{
+          display: visible ? 'block' : 'none',
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          width: cssWidth,
+          height: cssHeight,
+          transform: `translate(${tx}px, ${ty}px)`,
+          transformOrigin: '0 0',
+          // z-21: above Canvas2D (z-20). ThorVG is always the sole renderer for animation content.
+          // Canvas2D (z-20) handles editor chrome only; skipLottieContent skips all artboard shapes.
+          zIndex: 21,
+          pointerEvents: 'none',
+          imageRendering: 'auto',
+        }}
+      />
+    </>
   );
 }

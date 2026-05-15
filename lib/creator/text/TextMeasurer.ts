@@ -43,6 +43,36 @@ function resetCtx(ctx: CanvasRenderingContext2D) {
     }
 }
 
+// Cache keyed by "family|weight|size" — avoids repeated canvas measurements for the same font.
+const _fontAscentCache = new Map<string, number>();
+
+/**
+ * Returns the font bounding-box ascent (baseline → top of tallest glyph) for the given font,
+ * measured via the singleton Canvas2D context.  Falls back to `fontSize * 0.8` in SSR or when
+ * `fontBoundingBoxAscent` is unavailable (older browsers).
+ *
+ * Used by LottieExporter and patchLottieNode to offset text-layer `ks.p.y` so that ThorVG's
+ * baseline-origin rendering lands at the same visual top that Canvas2D draws with textBaseline='top'.
+ */
+export function measureFontAscent(fontFamily: string, fontWeight: string, fontSize: number): number {
+    const key = `${fontFamily}|${fontWeight}|${fontSize}`;
+    const cached = _fontAscentCache.get(key);
+    if (cached !== undefined) return cached;
+
+    let ascent = fontSize * 0.8; // safe fallback (most web fonts ≈ 0.75–0.9 × em)
+    try {
+        const ctx = getMeasureCtx();
+        ctx.font = `${fontWeight} ${fontSize}px "${fontFamily}", sans-serif`;
+        const m = ctx.measureText('Ag');
+        if (typeof m.fontBoundingBoxAscent === 'number' && m.fontBoundingBoxAscent > 0) {
+            ascent = m.fontBoundingBoxAscent;
+        }
+    } catch { /* non-browser context or unsupported API — use approximation */ }
+
+    _fontAscentCache.set(key, ascent);
+    return ascent;
+}
+
 /**
  * Compute the x offset where this line's text STARTS in local node space.
  * Mirrors the CanvasRenderer's x + ctx.textAlign logic.

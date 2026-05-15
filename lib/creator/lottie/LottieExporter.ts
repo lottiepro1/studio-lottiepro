@@ -5,6 +5,7 @@ import { getBoundingBox, getWorldMatrix, localToScreen, getCollectiveBoundingBox
 import { VectorPoint } from '../tools/PenTool';
 import { EASING_PRESETS } from '../core/EasingPresets';
 import { AnimationUtils } from '../core/Animation';
+import { measureFontAscent } from '../text/TextMeasurer';
 
 export class LottieExporter {
     static export(nodes: Map<string, SceneNode>, fps: number, duration: number, flowBlocks: FlowBlock[] = []): LottieAnimation {
@@ -404,6 +405,22 @@ export class LottieExporter {
             ks: LottieExporter.mapTransform(node, nodes, bakedTransform),
             hd: node.visible === false ? 1 : 0
         };
+
+        // From-scratch text nodes: our transform.y means the TOP of the em box (textBaseline='top'),
+        // but ThorVG / Lottie place the text BASELINE at ks.p.y.  Add the font's bounding-box ascent
+        // so ThorVG's baseline rendering lands at the visual top we intend.
+        // Imported text nodes are excluded — their transform.y was already parsed from the original
+        // Lottie baseline position, so no correction is needed.
+        if (node.type === 'text') {
+            const fontSize = LottieExporter.safeNum(node.props?.fontSize, 24);
+            const fontFamily = (node.props?.fontFamily || 'Arial').split(',')[0].trim();
+            const fontWeight = node.props?.fontWeight || '400';
+            const ascent = measureFontAscent(fontFamily, fontWeight, fontSize);
+            const ksP = (layer.ks as any).p;
+            if (ksP?.a === 0 && Array.isArray(ksP.k)) {
+                ksP.k[1] = LottieExporter.safeNum(ksP.k[1]) + ascent;
+            }
+        }
 
         // Omit defaults and metadata
         if (blendMode !== 0) layer.bm = blendMode;

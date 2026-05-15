@@ -3,6 +3,7 @@ import { SceneSlice, SceneNode } from './sceneSlice';
 import { AnimationUtils } from '../core/Animation';
 import { CreatorStore } from './types';
 import { getPathLocalBounds, getAnimatedAnchor } from '../core/Matrix';
+import { measureFontAscent } from '../text/TextMeasurer';
 
 export interface Keyframe {
     id: string;
@@ -249,6 +250,16 @@ export const createAnimationSlice: StateCreator<CreatorStore, [["zustand/immer",
             ks.s = { a: 0, k: [safeNum(node.transform.scaleX, 1) * 100, safeNum(node.transform.scaleY, 1) * 100, 100] };
             ks.o = { a: 0, k: safeNum(node.style.opacity, 1) * 100 };
 
+            // Bug 2 fix: patch text content for imported text layers.
+            // patchLottieNode previously patched transforms/visibility only — lottieLayer.t.d.k
+            // kept the original "Text" placeholder, so fast-path reloads showed stale text.
+            if (node.type === 'text') {
+                const td = (lottieLayer as any).t?.d?.k;
+                if (Array.isArray(td)) {
+                    td.forEach((kf: any) => { if (kf.s) kf.s.t = node.props?.text ?? ''; });
+                }
+            }
+
             // ALSO patch lottieModel so the fast-path reload gets the updates instantly.
             // Access through draft.lottieModel.layers[idx] directly — Immer draft proxies always
             // report isFrozen=false, so the frozen-branch guard never fires and lottieModel.layers[idx]
@@ -265,6 +276,13 @@ export const createAnimationSlice: StateCreator<CreatorStore, [["zustand/immer",
                         mks.r = { a: 0, k: safeNum(node.transform.rotation) };
                         mks.s = { a: 0, k: [safeNum(node.transform.scaleX, 1) * 100, safeNum(node.transform.scaleY, 1) * 100, 100] };
                         mks.o = { a: 0, k: safeNum(node.style.opacity, 1) * 100 };
+                    }
+                    // Bug 2 fix: also patch text content in lottieModel for imported text layers.
+                    if (node.type === 'text') {
+                        const mtd = (modelLayer as any).t?.d?.k;
+                        if (Array.isArray(mtd)) {
+                            mtd.forEach((kf: any) => { if (kf.s) kf.s.t = node.props?.text ?? ''; });
+                        }
                     }
                 }
             }
@@ -311,7 +329,19 @@ export const createAnimationSlice: StateCreator<CreatorStore, [["zustand/immer",
             const hasOrAnims     = (anim['props.outerRadius']?.length  ?? 0) > 0;
             const hasIrAnims     = (anim['props.innerRadius']?.length  ?? 0) > 0;
 
-            if (!hasPosAnims)   ks.p = { a: 0, k: [safeNum(node.transform.x), safeNum(node.transform.y), 0] };
+            if (!hasPosAnims) {
+                // Bug 1 fix: from-scratch text nodes store transform.y as the top of the em box
+                // (Canvas2D textBaseline='top'), but ThorVG/Lottie place the baseline at ks.p.y.
+                // Add font ascent so ThorVG's baseline rendering lands at our intended visual top.
+                const posY = node.type === 'text'
+                    ? safeNum(node.transform.y) + measureFontAscent(
+                        (node.props?.fontFamily || 'Arial').split(',')[0].trim(),
+                        node.props?.fontWeight || '400',
+                        safeNum(node.props?.fontSize, 24)
+                      )
+                    : safeNum(node.transform.y);
+                ks.p = { a: 0, k: [safeNum(node.transform.x), posY, 0] };
+            }
             if (!hasRotAnims)   ks.r = { a: 0, k: safeNum(node.transform.rotation) };
             if (!hasScaleAnims) ks.s = { a: 0, k: [safeNum(node.transform.scaleX, 1) * 100, safeNum(node.transform.scaleY, 1) * 100, 100] };
             if (!hasOpacAnims)  ks.o = { a: 0, k: safeNum(node.style.opacity, 1) * 100 };
@@ -437,6 +467,17 @@ export const createAnimationSlice: StateCreator<CreatorStore, [["zustand/immer",
                     }
                 };
                 walkGeom((lottieLayer as any).shapes);
+            }
+
+            // Bug 2 fix: patch text content for from-scratch text layers.
+            // walkGeom/walkShapes above only handle shape geometry — text content lives in t.d.k.
+            // Without this patch, lottieModel.t.d.k[0].s.t stays as the original "Text" placeholder
+            // and every fast-path reload shows the stale text instead of what the user typed.
+            if (node.type === 'text') {
+                const td = (lottieLayer as any).t?.d?.k;
+                if (Array.isArray(td)) {
+                    td.forEach((kf: any) => { if (kf.s) kf.s.t = node.props?.text ?? ''; });
+                }
             }
 
         } else if (draft.lottieLayerMap) {

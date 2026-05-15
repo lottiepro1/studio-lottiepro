@@ -4,13 +4,13 @@ import { useRef, useState, useEffect } from "react";
 import { useCreatorStore } from "@/lib/creator/state/store";
 import { LottieParser } from "@/lib/creator/lottie/LottieParser";
 import CanvasView from "./components/Canvas/CanvasView";
-import Toolbar from "./components/Toolbar/Toolbar";
+import Navbar from "./components/Toolbar/Navbar";
 import LayersPanel from "./components/Layers/LayersPanel";
 import InspectorPanel from "./components/Inspector/InspectorPanel";
 import TimelinePanel from "./components/Timeline/TimelinePanel";
 import StatusBar from "./components/StatusBar";
 import ResizablePanel from "./components/Layout/ResizablePanel";
-import { ChevronDown, FileJson, Zap, AlertTriangle } from "lucide-react";
+import { AlertTriangle, FileJson, Zap } from "lucide-react";
 import { extractGlyphsForScene } from "@/lib/creator/text/GlyphExtractor";
 import { getFontFileUrl } from "@/lib/creator/fonts/GoogleFontsService";
 import { LottieExporter } from "@/lib/creator/lottie/LottieExporter";
@@ -323,7 +323,6 @@ export default function CreatorPage() {
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [showExportOptions, setShowExportOptions] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [exportSettings, setExportSettings] = useState({
     filename: "animation",
@@ -614,7 +613,6 @@ export default function CreatorPage() {
         saveAs(content, `${finalFilename}.lottie`);
       }
       console.log(`✅ Successfully exported as ${finalFormat}`);
-      setShowExportOptions(false);
       setShowSettingsModal(false);
     } catch (err) {
       console.error("Export failed:", err);
@@ -854,196 +852,17 @@ export default function CreatorPage() {
         }}
       />
 
-      {/* ── Top Bar ─────────────────────────────────────────── */}
-      <header
-        className="h-11 shrink-0 flex items-center px-4 gap-1 z-50 border-b border-white/[0.06]"
-        style={{ background: "var(--bg-panel)" }}
-      >
-        {/* Logo */}
-        <div className="flex items-center gap-2 shrink-0">
-          <img
-            src="/lottiepro-icon.svg"
-            width="28"
-            height="28"
-            alt="LottiePro"
-          />
-        </div>
-
-        {/* Left controls */}
-        <div className="w-px h-4 mx-3 bg-white/10 shrink-0" />
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          className="px-3 h-7 rounded-md text-xs font-medium text-secondary hover:bg-hover hover:text-primary transition-colors shrink-0"
-        >
-          Import
-        </button>
-        <div className="w-px h-4 mx-1 bg-white/[0.06] shrink-0" />
-        <button
-          onClick={() => {
-            console.log("UI UNDO CLICKED");
-            useCreatorStore.getState().undo();
-          }}
-          className="px-2.5 h-7 rounded-md text-xs font-medium text-secondary hover:bg-hover hover:text-primary transition-colors"
-          title="Undo (Cmd+Z)"
-        >
-          Undo
-        </button>
-        <button
-          onClick={() => {
-            console.log("UI REDO CLICKED");
-            useCreatorStore.getState().redo();
-          }}
-          className="px-2.5 h-7 rounded-md text-xs font-medium text-secondary hover:bg-hover hover:text-primary transition-colors"
-          title="Redo (Cmd+Shift+Z)"
-        >
-          Redo
-        </button>
-
-        {/* Right controls */}
-        <div className="ml-auto flex items-center gap-2">
-          {/* Mode toggle — segmented control */}
-          <div
-            className="flex p-0.5 rounded-lg border border-white/10"
-            style={{ background: "var(--bg-surface)" }}
-          >
-            <button
-              onClick={() =>
-                useCreatorStore.getState().setCreatorMode("animate")
-              }
-              className={`px-4 h-6 rounded-md text-xs font-medium transition-all ${
-                creatorMode === "animate"
-                  ? "text-primary"
-                  : "text-secondary hover:text-primary"
-              }`}
-              style={
-                creatorMode === "animate"
-                  ? { background: "var(--bg-active)" }
-                  : {}
-              }
-            >
-              Animate
-            </button>
-            <button
-              onClick={() => {
-                const state = useCreatorStore.getState();
-                state.setCreatorMode("state-flow");
-                state.setSelection([]);
-                state.setActiveTool("select");
-                state.setEditingNode(null);
-              }}
-              className={`px-4 h-6 rounded-md text-xs font-medium transition-all ${
-                creatorMode === "state-flow"
-                  ? "text-primary"
-                  : "text-secondary hover:text-primary"
-              }`}
-              style={
-                creatorMode === "state-flow"
-                  ? { background: "var(--bg-active)" }
-                  : {}
-              }
-            >
-              State Machines
-            </button>
-          </div>
-
-          <div className="w-px h-4 bg-white/[0.06]" />
-
-          {/* Export */}
-          <div className="relative">
-            <button
-              onClick={() => setShowExportOptions(!showExportOptions)}
-              className="flex items-center gap-1.5 px-3.5 h-7 rounded-md text-xs font-medium text-white transition-colors"
-              style={{
-                background: showExportOptions
-                  ? "var(--accent-hover)"
-                  : "var(--accent)",
-              }}
-            >
-              Export
-              <ChevronDown
-                size={12}
-                className={`transition-transform duration-150 ${showExportOptions ? "rotate-180" : ""}`}
-              />
-            </button>
-
-            {showExportOptions && (
-              <div
-                className="absolute top-full right-0 mt-1 w-52 rounded-lg overflow-hidden z-[100]"
-                style={{
-                  background: "var(--bg-surface)",
-                  border: "1px solid rgba(255,255,255,0.10)",
-                  boxShadow: "var(--shadow-lg)",
-                }}
-              >
-                <div className="p-1.5 flex flex-col gap-0.5">
-                  <button
-                    onClick={() => {
-                      setExportSettings((prev) => ({
-                        ...prev,
-                        format: "json",
-                      }));
-                      setShowSettingsModal(true);
-                      setShowExportOptions(false);
-                    }}
-                    className="flex items-center gap-3 px-3 py-2 rounded-md transition-colors text-left w-full hover:bg-hover"
-                  >
-                    <div className="w-7 h-7 rounded-md bg-white/5 flex items-center justify-center text-secondary">
-                      <FileJson size={14} />
-                    </div>
-                    <div>
-                      <div className="text-xs font-medium text-primary">
-                        Lottie JSON
-                      </div>
-                      <div className="text-[10px] text-muted">
-                        Single file .json
-                      </div>
-                    </div>
-                  </button>
-                  <button
-                    onClick={() => {
-                      setExportSettings((prev) => ({
-                        ...prev,
-                        format: "lottie",
-                      }));
-                      setShowSettingsModal(true);
-                      setShowExportOptions(false);
-                    }}
-                    className="flex items-center gap-3 px-3 py-2 rounded-md transition-colors text-left w-full hover:bg-hover"
-                  >
-                    <div className="w-7 h-7 rounded-md bg-accent/10 flex items-center justify-center text-accent">
-                      <Zap size={14} />
-                    </div>
-                    <div>
-                      <div className="text-xs font-medium text-primary">
-                        dotLottie
-                      </div>
-                      <div className="text-[10px] text-muted">
-                        Bundled .lottie
-                      </div>
-                    </div>
-                  </button>
-                </div>
-                <div className="px-3 py-2 border-t border-white/[0.06]">
-                  <p className="text-[10px] text-muted text-center">
-                    Web · iOS · Android
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </header>
+      {/* ── Navbar ──────────────────────────────────────────── */}
+      <Navbar
+        onImportLottie={() => fileInputRef.current?.click()}
+        onExport={(format) => {
+          setExportSettings((prev) => ({ ...prev, format }));
+          setShowSettingsModal(true);
+        }}
+      />
 
       {/* ── Main Workspace ───────────────────────────────────── */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Toolbar strip */}
-        <div
-          className="w-12 shrink-0 flex flex-col border-r border-white/[0.06]"
-          style={{ background: "var(--bg-panel)" }}
-        >
-          <Toolbar />
-        </div>
-
         {/* Content column */}
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Canvas + side panels row */}

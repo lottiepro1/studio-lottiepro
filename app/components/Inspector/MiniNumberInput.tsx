@@ -31,6 +31,8 @@ export default function MiniNumberInput({
     const [isEditing, setIsEditing] = useState(false);
     const [localVal, setLocalVal] = useState("");
     const inputRef = useRef<HTMLInputElement>(null);
+    const rafIdRef = useRef<number | null>(null);
+    const latestPendingRef = useRef<number | null>(null);
 
     const displayVal = isMixed ? "Mixed" :
         (value === undefined || value === null || isNaN(value)) ? "0" :
@@ -75,11 +77,34 @@ export default function MiniNumberInput({
 
                 const newValue = startValue + dx * sensitivity;
                 const clamped = Math.max(min ?? -Infinity, Math.min(max ?? Infinity, newValue));
-                onChange(clamped);
+
+                // Store the latest value and fire onChange at most once per display frame.
+                // This coalesces rapid mousemove events so downstream effects (ThorVG reload)
+                // never receive more updates than the screen can show.
+                latestPendingRef.current = clamped;
+                if (rafIdRef.current === null) {
+                    rafIdRef.current = requestAnimationFrame(() => {
+                        rafIdRef.current = null;
+                        if (latestPendingRef.current !== null) {
+                            onChange(latestPendingRef.current);
+                            latestPendingRef.current = null;
+                        }
+                    });
+                }
             }
         };
 
         const onMouseUp = () => {
+            // Cancel any pending rAF and flush the latest value synchronously so the
+            // final position is always committed even if the rAF hasn't fired yet.
+            if (rafIdRef.current !== null) {
+                cancelAnimationFrame(rafIdRef.current);
+                rafIdRef.current = null;
+            }
+            if (latestPendingRef.current !== null) {
+                onChange(latestPendingRef.current);
+                latestPendingRef.current = null;
+            }
             if (!moved) startEditing();
             window.removeEventListener('mousemove', onMouseMove);
             window.removeEventListener('mouseup', onMouseUp);
@@ -97,6 +122,12 @@ export default function MiniNumberInput({
             inputRef.current.select();
         }
     }, [isEditing]);
+
+    useEffect(() => {
+        return () => {
+            if (rafIdRef.current !== null) cancelAnimationFrame(rafIdRef.current);
+        };
+    }, []);
 
     return (
         <div

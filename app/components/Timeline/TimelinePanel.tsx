@@ -3,10 +3,22 @@
 import { useRef, useEffect, useMemo, useState } from 'react';
 import { useCreatorStore } from '@/lib/creator/state/store';
 import { playbackRef } from '@/lib/creator/state/playbackRef';
-import { Play, Pause, Square, ChevronLeft, ChevronRight, ChevronDown, Settings, Trash2, Timer, Repeat } from 'lucide-react';
+import {
+  Play, Pause, Square, ChevronLeft, ChevronRight, ChevronDown,
+  Settings, Trash2, Timer, Repeat,
+} from 'lucide-react';
 import TimelineSidebarTrack from './TimelineSidebarTrack';
 import TimelineKeyframeTrack from './TimelineKeyframeTrack';
 import { SceneNode } from '@/lib/creator/state/sceneSlice';
+
+// ── Design tokens (Figma 2001-1051) ─────────────────────────────────────────
+const PANEL_BG      = '#1D1D1D';
+const TAB_STRIP_BG  = '#18191B';
+const TAB_ACTIVE_BG = '#111113';
+const TAB_ACTIVE_BD = 'rgba(211,237,248,0.11)';
+const DIVIDER       = 'rgba(221,234,248,0.08)';
+const TEXT_COLOR    = 'rgba(241,247,254,0.71)';
+const TEXT_DIM      = 'rgba(241,247,254,0.50)';
 
 export default function TimelinePanel() {
   const nodes = useCreatorStore((state) => state.nodes);
@@ -34,7 +46,6 @@ export default function TimelinePanel() {
   const deleteNode = useCreatorStore((state) => state.deleteNode);
   const setSelection = useCreatorStore((state) => state.setSelection);
   const pushToHistory = useCreatorStore((state) => state.pushToHistory);
-
   const expandedNodes = useCreatorStore((state) => state.expandedNodes);
   const toggleNodeExpand = useCreatorStore((state) => state.toggleNodeExpand);
   const expandedShapeGroups = useCreatorStore((state) => state.expandedShapeGroups);
@@ -42,563 +53,252 @@ export default function TimelinePanel() {
   const setActivePanel = useCreatorStore((state) => state.setActivePanel);
   const activeArtboardId = useCreatorStore((state) => state.activeArtboardId);
   const setActiveArtboard = useCreatorStore((state) => state.setActiveArtboard);
-  const [marqueeRect, setMarqueeRect] = useState<{ startX: number, startY: number, endX: number, endY: number } | null>(null);
-  const [workAreaMenu, setWorkAreaMenu] = useState<{ x: number, y: number } | null>(null);
   const addFlowBlock = useCreatorStore((state) => state.addFlowBlock);
   const setSegmentsPanelOpen = useCreatorStore((state) => state.setSegmentsPanelOpen);
-  
-  // Virtualization state
+  const isTimelineCollapsed = useCreatorStore((state) => state.isTimelineCollapsed);
+  const setTimelineCollapsed = useCreatorStore((state) => state.setTimelineCollapsed);
+
+  const [marqueeRect, setMarqueeRect] = useState<{ startX: number; startY: number; endX: number; endY: number } | null>(null);
+  const [workAreaMenu, setWorkAreaMenu] = useState<{ x: number; y: number } | null>(null);
   const [scrollLeft, setScrollLeft] = useState(0);
   const [viewportWidth, setViewportWidth] = useState(1000);
 
-  const artboards = useMemo(() => {
-    return Array.from(nodes.values()).filter(n => n.type === 'artboard');
-  }, [nodes]);
+  const artboards = useMemo(() => Array.from(nodes.values()).filter(n => n.type === 'artboard'), [nodes]);
 
   const propertyGroups = useMemo(() => [
-    {
-      label: 'Position',
-      mainPath: 'transform.x',
-      props: [
-        { label: 'X', path: 'transform.x' },
-        { label: 'Y', path: 'transform.y' }
-      ]
-    },
-    {
-      label: 'Size',
-      mainPath: 'props.width',
-      hasLink: true,
-      props: [
-        { label: 'W', path: 'props.width' },
-        { label: 'H', path: 'props.height' }
-      ]
-    },
-    {
-      label: 'Roundness',
-      mainPath: 'props.roundness',
-      props: [
-        { label: 'Radius', path: 'props.roundness' }
-      ]
-    },
-    {
-      label: 'Scale',
-      mainPath: 'transform.scaleX',
-      hasLink: true,
-      props: [
-        { label: 'X', path: 'transform.scaleX', isPercent: true },
-        { label: 'Y', path: 'transform.scaleY', isPercent: true }
-      ]
-    },
-    {
-      label: 'Rotation',
-      mainPath: 'transform.rotation',
-      props: [
-        { label: 'R', path: 'transform.rotation', isDegree: true }
-      ]
-    },
-    {
-      label: 'Path',
-      mainPath: 'props.points',
-      props: [
-        { label: 'Path', path: 'props.points' }
-      ]
-    },
-    {
-      label: 'Opacity',
-      mainPath: 'style.opacity',
-      props: [
-        { label: 'T', path: 'style.opacity', isPercent: true, min: 0, max: 1 }
-      ]
-    },
-
-    {
-      label: 'Trim Start',
-      mainPath: 'style.trimStart',
-      props: [
-        { label: 'Start', path: 'style.trimStart', isPercent: true, min: 0, max: 1 }
-      ]
-    },
-    {
-      label: 'Trim End',
-      mainPath: 'style.trimEnd',
-      props: [
-        { label: 'End', path: 'style.trimEnd', isPercent: true, min: 0, max: 1 }
-      ]
-    },
-    {
-      label: 'Fill Color',
-      mainPath: 'style.fill',
-      props: [
-        { label: 'Fill', path: 'style.fill' }
-      ]
-    },
-    {
-      label: 'Fill Gradient',
-      mainPath: 'style.fillGradient',
-      props: [
-        { label: 'Gradient', path: 'style.fillGradient' }
-      ]
-    },
-    {
-      label: 'Fill Opacity',
-      mainPath: 'style.fillOpacity',
-      props: [
-        { label: 'Alpha', path: 'style.fillOpacity', isPercent: true, min: 0, max: 1 }
-      ]
-    },
-    {
-      label: 'Stroke Color',
-      mainPath: 'style.stroke',
-      props: [
-        { label: 'Stroke', path: 'style.stroke' }
-      ]
-    },
-    {
-      label: 'Stroke Gradient',
-      mainPath: 'style.strokeGradient',
-      props: [
-        { label: 'Gradient', path: 'style.strokeGradient' }
-      ]
-    },
-    {
-      label: 'Stroke Width',
-      mainPath: 'style.strokeWidth',
-      props: [
-        { label: 'Width', path: 'style.strokeWidth' }
-      ]
-    },
-    {
-      label: 'Stroke Opacity',
-      mainPath: 'style.strokeOpacity',
-      props: [
-        { label: 'Alpha', path: 'style.strokeOpacity', isPercent: true, min: 0, max: 1 }
-      ]
-    },
-    {
-      label: 'Trim Offset',
-      mainPath: 'style.trimOffset',
-      props: [
-        { label: 'Offset', path: 'style.trimOffset', isDegree: true }
-      ]
-    },
+    { label: 'Position',      mainPath: 'transform.x',       props: [{ label: 'X', path: 'transform.x' }, { label: 'Y', path: 'transform.y' }] },
+    { label: 'Size',          mainPath: 'props.width',        hasLink: true, props: [{ label: 'W', path: 'props.width' }, { label: 'H', path: 'props.height' }] },
+    { label: 'Roundness',     mainPath: 'props.roundness',    props: [{ label: 'Radius', path: 'props.roundness' }] },
+    { label: 'Scale',         mainPath: 'transform.scaleX',   hasLink: true, props: [{ label: 'X', path: 'transform.scaleX', isPercent: true }, { label: 'Y', path: 'transform.scaleY', isPercent: true }] },
+    { label: 'Rotation',      mainPath: 'transform.rotation', props: [{ label: 'R', path: 'transform.rotation', isDegree: true }] },
+    { label: 'Path',          mainPath: 'props.points',       props: [{ label: 'Path', path: 'props.points' }] },
+    { label: 'Opacity',       mainPath: 'style.opacity',      props: [{ label: 'T', path: 'style.opacity', isPercent: true, min: 0, max: 1 }] },
+    { label: 'Trim Start',    mainPath: 'style.trimStart',    props: [{ label: 'Start', path: 'style.trimStart', isPercent: true, min: 0, max: 1 }] },
+    { label: 'Trim End',      mainPath: 'style.trimEnd',      props: [{ label: 'End', path: 'style.trimEnd', isPercent: true, min: 0, max: 1 }] },
+    { label: 'Fill Color',    mainPath: 'style.fill',         props: [{ label: 'Fill', path: 'style.fill' }] },
+    { label: 'Fill Gradient', mainPath: 'style.fillGradient', props: [{ label: 'Gradient', path: 'style.fillGradient' }] },
+    { label: 'Fill Opacity',  mainPath: 'style.fillOpacity',  props: [{ label: 'Alpha', path: 'style.fillOpacity', isPercent: true, min: 0, max: 1 }] },
+    { label: 'Stroke Color',  mainPath: 'style.stroke',       props: [{ label: 'Stroke', path: 'style.stroke' }] },
+    { label: 'Stroke Gradient', mainPath: 'style.strokeGradient', props: [{ label: 'Gradient', path: 'style.strokeGradient' }] },
+    { label: 'Stroke Width',  mainPath: 'style.strokeWidth',  props: [{ label: 'Width', path: 'style.strokeWidth' }] },
+    { label: 'Stroke Opacity', mainPath: 'style.strokeOpacity', props: [{ label: 'Alpha', path: 'style.strokeOpacity', isPercent: true, min: 0, max: 1 }] },
+    { label: 'Trim Offset',   mainPath: 'style.trimOffset',   props: [{ label: 'Offset', path: 'style.trimOffset', isDegree: true }] },
   ], []);
+
   const basePixelsPerFrame = 8;
   const pixelsPerFrame = basePixelsPerFrame * zoomLevel;
   const rowHeight = 32;
-  const timelinePaddingLeft = 28; // Space between sidebar and grid
-  const RULER_HEIGHT = 44;
+  const timelinePaddingLeft = 28;
+  const RULER_HEIGHT = 32;
+
   const timelineRef = useRef<HTMLDivElement>(null);
-  // Direct DOM refs for scrubber needle — updated via rAF during playback (zero React re-renders)
+  const sidebarRef = useRef<HTMLDivElement>(null);
   const needleLineRef = useRef<HTMLDivElement>(null);
   const needleHeadRef = useRef<HTMLDivElement>(null);
   const needleTimeRef = useRef<HTMLDivElement>(null);
   const rafIdRef = useRef<number | null>(null);
 
-  // Handle Wheel (Zoom & Scroll)
+  // ── Zoom via wheel ────────────────────────────────────────────────────────
   useEffect(() => {
     const timeline = timelineRef.current;
     if (!timeline) return;
-
-    const handleWheelListener = (e: WheelEvent) => {
+    const handler = (e: WheelEvent) => {
       if (e.altKey || e.ctrlKey || e.metaKey) {
         e.preventDefault();
         const delta = e.deltaY > 0 ? 0.95 : 1.05;
-
-        const sidebarWidth = 320;
-        const containerWidth = timeline.clientWidth - sidebarWidth - timelinePaddingLeft - 40;
+        const containerWidth = timeline.clientWidth - timelinePaddingLeft - 40;
         const minPixelsPerFrame = containerWidth / (duration || 1);
         const minZoom = minPixelsPerFrame / basePixelsPerFrame;
-
         setZoomLevel(Math.max(minZoom, zoomLevel * delta));
       }
     };
-
-    timeline.addEventListener('wheel', handleWheelListener, { passive: false });
-    return () => timeline.removeEventListener('wheel', handleWheelListener);
+    timeline.addEventListener('wheel', handler, { passive: false });
+    return () => timeline.removeEventListener('wheel', handler);
   }, [zoomLevel, duration, setZoomLevel]);
 
   const fitTimeline = () => {
     const timeline = timelineRef.current;
     if (!timeline) return;
-    const sidebarWidth = 320;
-    const padding = timelinePaddingLeft + 80;
-    const containerWidth = timeline.clientWidth - sidebarWidth - padding;
+    const containerWidth = timeline.clientWidth - timelinePaddingLeft - 80;
     if (containerWidth <= 0) return;
-    const targetPixelsPerFrame = containerWidth / (duration || 1);
-    setZoomLevel(targetPixelsPerFrame / basePixelsPerFrame);
+    setZoomLevel((containerWidth / (duration || 1)) / basePixelsPerFrame);
   };
 
-  // Auto-fit timeline on mount and when duration changes
-  // This ensures we never have a massive blank area on the right upon import or duration adjustments
+  // ── Auto-fit on mount / resize ────────────────────────────────────────────
   useEffect(() => {
     const timeline = timelineRef.current;
     if (!timeline) return;
-
     const handleResize = () => {
       const state = useCreatorStore.getState();
-      const sidebarWidth = 320;
-      const padding = timelinePaddingLeft + 80;
-      const containerWidth = timeline.clientWidth - sidebarWidth - padding;
+      const containerWidth = timeline.clientWidth - timelinePaddingLeft - 80;
       if (containerWidth <= 0) return;
-
-      const currentContentWidth = duration * basePixelsPerFrame * state.zoomLevel;
-      
       setViewportWidth(timeline.clientWidth);
-
-      // Only auto-fit if the content is too small for the screen (to resolve the "blank area" issue)
-      // or if we have a very small default zoom level.
+      const currentContentWidth = duration * basePixelsPerFrame * state.zoomLevel;
       if (currentContentWidth < containerWidth || state.zoomLevel < 0.1) {
-        const targetPixelsPerFrame = containerWidth / (duration || 1);
-        setZoomLevel(targetPixelsPerFrame / basePixelsPerFrame);
+        setZoomLevel((containerWidth / (duration || 1)) / basePixelsPerFrame);
       }
     };
-
     const handleScroll = () => {
       setScrollLeft(timeline.scrollLeft);
+      if (sidebarRef.current) sidebarRef.current.scrollTop = timeline.scrollTop;
     };
-
-    // Initial check after a short delay to ensure DOM is ready
     const timer = setTimeout(handleResize, 50);
-
     const observer = new ResizeObserver(handleResize);
     observer.observe(timeline);
     timeline.addEventListener('scroll', handleScroll, { passive: true });
+    return () => { clearTimeout(timer); observer.disconnect(); timeline.removeEventListener('scroll', handleScroll); };
+  }, [duration]);
 
-    return () => {
-      clearTimeout(timer);
-      observer.disconnect();
-      timeline.removeEventListener('scroll', handleScroll);
-    };
-  }, [duration]); // Only re-run if duration changes
-
-  // AE Property Shortcuts
+  // ── Keyboard shortcuts ────────────────────────────────────────────────────
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Only trigger if we're not typing in an input and timeline is active
       if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
-
       const key = e.key.toLowerCase();
-      const propertyMap: Record<string, string> = {
-        'p': 'transform.x',       // Position
-        's': 'transform.scaleX',  // Scale
-        'r': 'transform.rotation',
-        't': 'style.opacity',     // Transparency/Opacity
-        'a': 'transform.anchorX', // Anchor Point
-        'm': 'props.points',      // Mask/Path
-        'q': 'style.trimStart',   // Trim Paths
-      };
-
+      const propertyMap: Record<string, string> = { p: 'transform.x', s: 'transform.scaleX', r: 'transform.rotation', t: 'style.opacity', a: 'transform.anchorX', m: 'props.points', q: 'style.trimStart' };
       const state = useCreatorStore.getState();
-      if (key === 'u' && state.activePanel === 'timeline') {
-        e.preventDefault();
-        selectedIds.forEach(id => {
-          state.showAnimatedProperties(id);
-        });
-        return;
-      }
-
+      if (key === 'u' && state.activePanel === 'timeline') { e.preventDefault(); selectedIds.forEach(id => state.showAnimatedProperties(id)); return; }
       if (propertyMap[key] && state.activePanel === 'timeline') {
-        console.log(`🎬 Timeline Shortcut: ${key} for ${propertyMap[key]}`);
         e.preventDefault();
         selectedIds.forEach(id => {
-          const node = nodes.get(id);
-          if (!node) return;
-
-          // Visibility logic in tracks handles showing solo properties even if collapsed
-
-          if (key === 's') {
-            toggleTrackVisibility(id, 'transform.scaleX');
-          } else if (key === 'q') {
-            // Toggle all trim properties together
-            toggleTrackVisibility(id, 'style.trimStart');
-            toggleTrackVisibility(id, 'style.trimEnd');
-            toggleTrackVisibility(id, 'style.trimOffset');
-          } else {
-            toggleTrackVisibility(id, propertyMap[key]);
-          }
+          if (!nodes.get(id)) return;
+          if (key === 's') toggleTrackVisibility(id, 'transform.scaleX');
+          else if (key === 'q') { toggleTrackVisibility(id, 'style.trimStart'); toggleTrackVisibility(id, 'style.trimEnd'); toggleTrackVisibility(id, 'style.trimOffset'); }
+          else toggleTrackVisibility(id, propertyMap[key]);
         });
       }
-
-      // Work Area Shortcuts (AE Style)
-      if (key === 'b' && state.activePanel === 'timeline') {
-        e.preventDefault();
-        const currentEnd = state.workAreaEnd ?? state.duration;
-        state.setWorkArea(state.currentTime, Math.max(state.currentTime + 1, currentEnd));
-      }
-      if (key === 'n' && state.activePanel === 'timeline') {
-        e.preventDefault();
-        const currentStart = state.workAreaStart ?? 0;
-        state.setWorkArea(Math.min(state.currentTime, currentStart), state.currentTime + 1);
-      }
-
-      // Layer Timeframe Shortcuts (AE Style)
-      // Use e.code (BracketLeft/Right) because Option+[ on Mac results in different chars
+      if (key === 'b' && state.activePanel === 'timeline') { e.preventDefault(); const currentEnd = state.workAreaEnd ?? state.duration; state.setWorkArea(state.currentTime, Math.max(state.currentTime + 1, currentEnd)); }
+      if (key === 'n' && state.activePanel === 'timeline') { e.preventDefault(); const currentStart = state.workAreaStart ?? 0; state.setWorkArea(Math.min(state.currentTime, currentStart), state.currentTime + 1); }
       if ((e.code === 'BracketLeft' || e.code === 'BracketRight') && state.activePanel === 'timeline') {
         e.preventDefault();
         const isLeft = e.code === 'BracketLeft';
         state.pushToHistory(e.altKey ? 'Trim Layer' : 'Shift Layer');
-
         state.selectedIds.forEach(id => {
           const node = state.nodes.get(id);
           if (!node || node.type === 'artboard') return;
-
-          const currentDuration = node.outPoint - node.inPoint;
-
-          if (e.altKey) {
-            // Trim (Option+[ or Option+])
-            if (isLeft) {
-              state.updateNode(id, { inPoint: Math.min(node.outPoint - 1, state.currentTime) });
-            } else {
-              state.updateNode(id, { outPoint: Math.max(node.inPoint + 1, state.currentTime) });
-            }
-          } else {
-            // Shift ([ or ])
-            if (isLeft) {
-              const delta = state.currentTime - node.inPoint;
-              state.shiftLayers([id], delta);
-            } else {
-              const delta = state.currentTime - node.outPoint;
-              state.shiftLayers([id], delta);
-            }
-          }
+          if (e.altKey) { if (isLeft) state.updateNode(id, { inPoint: Math.min(node.outPoint - 1, state.currentTime) }); else state.updateNode(id, { outPoint: Math.max(node.inPoint + 1, state.currentTime) }); }
+          else { if (isLeft) state.shiftLayers([id], state.currentTime - node.inPoint); else state.shiftLayers([id], state.currentTime - node.outPoint); }
         });
       }
-
       if ((key === 'delete' || key === 'backspace') && state.activePanel === 'timeline') {
-        if (selectedKeyframeIds.length > 0) {
-          e.preventDefault();
-          deleteSelectedKeyframes();
-        } else if (selectedIds.length > 0) {
-          e.preventDefault();
-          pushToHistory(`Delete ${selectedIds.length > 1 ? 'Selected Layers' : 'Layer'}`);
-          selectedIds.forEach(id => deleteNode(id));
-          setSelection([]);
-          return;
-        }
+        if (selectedKeyframeIds.length > 0) { e.preventDefault(); deleteSelectedKeyframes(); }
+        else if (selectedIds.length > 0) { e.preventDefault(); pushToHistory(`Delete ${selectedIds.length > 1 ? 'Selected Layers' : 'Layer'}`); selectedIds.forEach(id => deleteNode(id)); setSelection([]); }
       }
-
-      // Copy / Paste
       if ((e.ctrlKey || e.metaKey) && key === 'c' && state.activePanel === 'timeline') {
-        if (selectedKeyframeIds.length > 0) {
-          e.preventDefault();
-          state.copyKeyframes();
-        } else if (selectedIds.length > 0) {
-          e.preventDefault();
-          state.copySelection();
-        }
+        if (selectedKeyframeIds.length > 0) { e.preventDefault(); state.copyKeyframes(); }
+        else if (selectedIds.length > 0) { e.preventDefault(); state.copySelection(); }
       }
-
       if ((e.ctrlKey || e.metaKey) && key === 'v' && state.activePanel === 'timeline') {
-        // Prioritize keyframe paste if there's keyframe data and keyframes were the last thing copied? 
-        // Actually standard AE behavior: if you have keyframe data, paste it to selected layers.
-        if (state.keyframeClipboard.length > 0) {
-          e.preventDefault();
-          state.pasteKeyframes();
-        } else if (state.clipboard.length > 0) {
-          e.preventDefault();
-          state.pasteSelection();
-        }
+        if (state.keyframeClipboard.length > 0) { e.preventDefault(); state.pasteKeyframes(); }
+        else if (state.clipboard.length > 0) { e.preventDefault(); state.pasteSelection(); }
       }
     };
-
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedIds, toggleTrackVisibility, selectedKeyframeIds, deleteSelectedKeyframes, togglePlaying, nodes]);
 
+  // ── Scrubbing ─────────────────────────────────────────────────────────────
   const startScrubbing = (gridArea: HTMLElement, e: React.MouseEvent | MouseEvent) => {
     const onMouseMove = (moveE: MouseEvent) => {
       const rect = gridArea.getBoundingClientRect();
       const x = moveE.clientX - rect.left - timelinePaddingLeft;
-      const frame = Math.max(0, Math.min(duration - 1, Math.round(x / pixelsPerFrame)));
-      setCurrentTime(frame);
+      setCurrentTime(Math.max(0, Math.min(duration - 1, Math.round(x / pixelsPerFrame))));
     };
-
-    const onMouseUp = () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-    };
-
+    const onMouseUp = () => { window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp); };
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
-
-    // Initial update for the click point
     onMouseMove(e as MouseEvent);
   };
 
+  // ── Marquee selection ─────────────────────────────────────────────────────
   const startMarqueeSelection = (gridArea: HTMLElement, e: React.MouseEvent | MouseEvent) => {
     const rect = gridArea.getBoundingClientRect();
     const startX = e.clientX - rect.left;
     const startY = e.clientY - rect.top;
     const isShift = e.shiftKey || e.ctrlKey || e.metaKey;
-
-    if (!isShift) {
-      selectKeyframes([]);
-    }
-
+    if (!isShift) selectKeyframes([]);
     const initialKeyframes = useCreatorStore.getState().selectedKeyframeIds;
-
     const onMouseMove = (moveE: MouseEvent) => {
       const currentX = moveE.clientX - rect.left;
       const currentY = moveE.clientY - rect.top;
-
       setMarqueeRect({ startX, startY, endX: currentX, endY: currentY });
-
-      // Calculate selection
       const minX = Math.min(startX, currentX) - timelinePaddingLeft;
       const maxX = Math.max(startX, currentX) - timelinePaddingLeft;
-      const minY = Math.min(startY, currentY) - RULER_HEIGHT; // Subtract ruler height
+      const minY = Math.min(startY, currentY) - RULER_HEIGHT;
       const maxY = Math.max(startY, currentY) - RULER_HEIGHT;
-
       const minFrame = minX / pixelsPerFrame;
       const maxFrame = maxX / pixelsPerFrame;
-
       const newlySelected: string[] = [];
       let nextY = 0;
-
       sortedNodesData.forEach(({ node }) => {
-        // Main Row (Layer Bar) - Height: rowHeight
         nextY += rowHeight;
-
-        // Property Rows
         const trackVisibility = trackVisibilityAll[node.id] || [];
         const adaptedGroups = propertyGroups.map(group => {
-          if (node.type === 'image') {
-            const allowed = ['Position', 'Scale', 'Rotation', 'Opacity'];
-            if (!allowed.includes(group.label)) return null;
-          }
-
-          if (group.label === 'Size') {
-            if (node.type === 'ellipse') return { ...group, mainPath: 'props.radiusX', props: [{ path: 'props.radiusX' }, { path: 'props.radiusY' }] };
-            if (node.type !== 'rect' && node.type !== 'artboard' && node.type !== 'path') return null;
-          }
+          if (node.type === 'image') { const allowed = ['Position', 'Scale', 'Rotation', 'Opacity']; if (!allowed.includes(group.label)) return null; }
+          if (group.label === 'Size') { if (node.type === 'ellipse') return { ...group, mainPath: 'props.radiusX', props: [{ path: 'props.radiusX' }, { path: 'props.radiusY' }] }; if (node.type !== 'rect' && node.type !== 'artboard' && node.type !== 'path') return null; }
           if (group.label === 'Path' && !(node.type === 'path' || node.type === 'rect' || node.type === 'ellipse')) return null;
           if (group.label.startsWith('Trim') && !(node.type === 'rect' || node.type === 'ellipse' || node.type === 'path' || node.type === 'group')) return null;
-          if (group.label === 'Roundness' && (node.type !== 'rect' && node.type !== 'path')) {
-            return null;
-          }
-
+          if (group.label === 'Roundness' && node.type !== 'rect' && node.type !== 'path') return null;
           return group;
         }).filter(Boolean);
-
         const isExpanded = !!expandedNodes[node.id];
         const isSolo = trackVisibility.length > 0;
-
-        const visibleGroups = isSolo
-          ? adaptedGroups.filter((g: any) => g && trackVisibility.includes(g.mainPath))
-          : (isExpanded ? adaptedGroups : []);
-
-        const getAnimatedGroups = (groups: any[]) => {
-          return groups.filter(group => group.props.some((p: any) => !!node.animations?.[p.path]));
-        };
-
+        const visibleGroups = isSolo ? adaptedGroups.filter((g: any) => g && trackVisibility.includes(g.mainPath)) : (isExpanded ? adaptedGroups : []);
+        const getAnimatedGroups = (groups: any[]) => groups.filter(group => group.props.some((p: any) => !!node.animations?.[p.path]));
         const coreGroups = getAnimatedGroups(visibleGroups).filter((g: any) => ['Position', 'Scale', 'Rotation', 'Opacity'].includes(g.label));
         const shapeGroups = getAnimatedGroups(adaptedGroups).filter((g: any) => !['Position', 'Scale', 'Rotation', 'Opacity'].includes(g.label));
         const isShapeGroupExpanded = !!expandedShapeGroups[node.id];
-
         const processGroup = (group: any) => {
           if (!group) return;
-          const rowTop = nextY;
-          const rowBottom = nextY + rowHeight;
+          const rowTop = nextY; const rowBottom = nextY + rowHeight;
           if (rowBottom > minY && rowTop < maxY) {
-            group.props.forEach((p: any) => {
-              const kfs = node.animations?.[p.path] || [];
-              kfs.forEach((kf: any) => {
-                if (kf.time >= minFrame && kf.time <= maxFrame) {
-                  newlySelected.push(`${node.id}:${p.path}:${kf.id}`);
-                }
-              });
-            });
+            group.props.forEach((p: any) => { const kfs = node.animations?.[p.path] || []; kfs.forEach((kf: any) => { if (kf.time >= minFrame && kf.time <= maxFrame) newlySelected.push(`${node.id}:${p.path}:${kf.id}`); }); });
           }
           nextY += rowHeight;
         };
-
-        if (isSolo) {
-          visibleGroups.forEach(processGroup);
-        } else if (isExpanded) {
+        if (isSolo) visibleGroups.forEach(processGroup);
+        else if (isExpanded) {
           coreGroups.forEach(processGroup);
-
-          if (shapeGroups.length > 0) {
-            nextY += rowHeight; // Shape Header Row
-            if (isShapeGroupExpanded) {
-              shapeGroups.forEach(processGroup);
-            }
-          }
+          if (shapeGroups.length > 0) { nextY += rowHeight; if (isShapeGroupExpanded) shapeGroups.forEach(processGroup); }
         }
       });
-
-      const finalSelection = isShift
-        ? Array.from(new Set([...initialKeyframes, ...newlySelected]))
-        : newlySelected;
-
-      selectKeyframes(finalSelection, false);
+      selectKeyframes(isShift ? Array.from(new Set([...initialKeyframes, ...newlySelected])) : newlySelected, false);
     };
-
-    const onMouseUp = () => {
-      setMarqueeRect(null);
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-    };
-
+    const onMouseUp = () => { setMarqueeRect(null); window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp); };
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
   };
 
+  // ── Layer selection ───────────────────────────────────────────────────────
   const handleLayerSelect = (nodeId: string, isShift: boolean, isCtrl: boolean) => {
     setActivePanel('timeline');
     const state = useCreatorStore.getState();
     const currentSelected = state.selectedIds;
     const lastSelected = state.lastSelectedId;
-
     if (isShift && lastSelected) {
       const allIds = sortedNodesData.map(d => d.node.id);
       const startIdx = allIds.indexOf(lastSelected);
       const endIdx = allIds.indexOf(nodeId);
-
       if (startIdx !== -1 && endIdx !== -1) {
         const min = Math.min(startIdx, endIdx);
         const max = Math.max(startIdx, endIdx);
         const range = allIds.slice(min, max + 1);
-
-        if (isCtrl) {
-          // Add range to existing selection
-          const nextSelection = Array.from(new Set([...currentSelected, ...range]));
-          setSelection(nextSelection);
-        } else {
-          // Replace selection with range
-          setSelection(range);
-        }
+        setSelection(isCtrl ? Array.from(new Set([...currentSelected, ...range])) : range);
         return;
       }
     }
-
-    if (isCtrl) {
-      if (currentSelected.includes(nodeId)) {
-        state.removeFromSelection(nodeId);
-      } else {
-        state.addToSelection(nodeId);
-      }
-    } else {
-      setSelection([nodeId]);
-    }
+    if (isCtrl) { if (currentSelected.includes(nodeId)) state.removeFromSelection(nodeId); else state.addToSelection(nodeId); }
+    else setSelection([nodeId]);
   };
 
   const handleTimelineClick = (e: React.MouseEvent) => {
-    // Determine if we clicked the ruler (top sticky area)
     const timelineRect = timelineRef.current?.getBoundingClientRect();
     if (!timelineRect) return;
-
-    // Use viewport-relative Y coordinate relative to the timeline panel top
     const relativeY = e.clientY - timelineRect.top;
-
     if (relativeY <= RULER_HEIGHT) {
       const gridArea = (e.currentTarget as HTMLElement).closest('[data-timeline-grid]') as HTMLElement;
       if (gridArea) startScrubbing(gridArea, e);
     } else {
-      // If clicking on the background (empty space below tracks or even on a track background)
-      if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
-        setSelection([]);
-        selectKeyframes([]);
-      }
+      if (!e.shiftKey && !e.ctrlKey && !e.metaKey) { setSelection([]); selectKeyframes([]); }
       startMarqueeSelection(e.currentTarget as HTMLElement, e);
     }
   };
@@ -609,171 +309,108 @@ export default function TimelinePanel() {
   };
 
   const handleWorkAreaDrag = (e: React.MouseEvent, type: 'start' | 'end') => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    // The handle is inside [sticky overlay] -> [Grid Area]
+    e.preventDefault(); e.stopPropagation();
     const gridArea = e.currentTarget.parentElement?.parentElement;
     if (!gridArea) return;
-
     const onMouseMove = (moveE: MouseEvent) => {
       const rect = gridArea.getBoundingClientRect();
-      const clickX = moveE.clientX - rect.left - timelinePaddingLeft;
+      const targetFrame = Math.max(0, Math.min(useCreatorStore.getState().duration, Math.round((moveE.clientX - rect.left - timelinePaddingLeft) / pixelsPerFrame)));
       const state = useCreatorStore.getState();
-      const targetFrame = Math.max(0, Math.min(state.duration, Math.round(clickX / pixelsPerFrame)));
-
       const currentStart = state.workAreaStart ?? 0;
       const currentEnd = state.workAreaEnd ?? state.duration;
-
-      if (type === 'start') {
-        const newStart = Math.min(targetFrame, currentEnd);
-        useCreatorStore.getState().setWorkArea(newStart, currentEnd);
-      } else {
-        const newEnd = Math.max(targetFrame, currentStart);
-        useCreatorStore.getState().setWorkArea(currentStart, newEnd);
-      }
+      if (type === 'start') state.setWorkArea(Math.min(targetFrame, currentEnd), currentEnd);
+      else state.setWorkArea(currentStart, Math.max(targetFrame, currentStart));
     };
-
-    const onMouseUp = () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-    };
-
+    const onMouseUp = () => { window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp); };
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
   };
 
-  const handleWorkAreaContextMenu = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setWorkAreaMenu({ x: e.clientX, y: e.clientY });
-  };
+  const handleWorkAreaContextMenu = (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); setWorkAreaMenu({ x: e.clientX, y: e.clientY }); };
 
-  // Close context menu on outside click
   useEffect(() => {
     if (!workAreaMenu) return;
-    const closeMenu = () => setWorkAreaMenu(null);
-    window.addEventListener('mousedown', closeMenu);
-    return () => window.removeEventListener('mousedown', closeMenu);
+    const close = () => setWorkAreaMenu(null);
+    window.addEventListener('mousedown', close);
+    return () => window.removeEventListener('mousedown', close);
   }, [workAreaMenu]);
 
-  // Playback Loop
+  // ── Playback loop ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (!isPlaying) return;
-
     let animationFrameId: number;
     let lastTime = performance.now();
     let frameAccumulator = 0;
-
     const loop = (now: number) => {
-      const delta = now - lastTime;
-      lastTime = now;
+      const delta = now - lastTime; lastTime = now;
       frameAccumulator += (delta / 1000) * fps;
-
       if (frameAccumulator >= 1) {
         const framesToAdvance = Math.floor(frameAccumulator);
         frameAccumulator -= framesToAdvance;
-
-        // Access latest values via store.getState() to avoid dependency on currentTime/isLooping/duration
         const state = useCreatorStore.getState();
         let nextTime = state.currentTime + framesToAdvance;
-
         const loopStart = state.workAreaStart ?? 0;
         const loopEnd = state.workAreaEnd ?? state.duration;
-
         if (nextTime >= loopEnd) {
-          if (state.isLooping) {
-            // Loop back to start, preserving remainder for smooth fps
-            const loopDuration = Math.max(1, loopEnd - loopStart);
-            const remainder = (nextTime - loopEnd) % loopDuration;
-            nextTime = loopStart + remainder;
-          } else {
-            nextTime = loopEnd - 1;
-            state.setPlaying(false); // Stop at end
-          }
-        } else if (nextTime < loopStart) {
-          // If scrubber is placed before loop start, jump into the loop immediately
-          nextTime = loopStart;
-        }
-
+          if (state.isLooping) { const ld = Math.max(1, loopEnd - loopStart); nextTime = loopStart + (nextTime - loopEnd) % ld; }
+          else { nextTime = loopEnd - 1; state.setPlaying(false); }
+        } else if (nextTime < loopStart) { nextTime = loopStart; }
         state.setCurrentTime(nextTime);
       }
       animationFrameId = requestAnimationFrame(loop);
     };
-
     animationFrameId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(animationFrameId);
-  }, [isPlaying, fps]); // Only restart if isPlaying or fps changes
+  }, [isPlaying, fps]);
 
+  // ── Scene nodes sorted ────────────────────────────────────────────────────
   const sortedNodesData = useMemo(() => {
     const artboard = activeArtboardId ? nodes.get(activeArtboardId) : Array.from(nodes.values()).find(n => n.type === 'artboard');
     if (!artboard) return [];
-
     const result: { node: SceneNode; depth: number }[] = [];
     const seen = new Set<string>();
-
     const traverse = (nodeId: string, depth: number) => {
       if (seen.has(nodeId)) return;
       seen.add(nodeId);
-
       const node = nodes.get(nodeId);
       if (!node) return;
-
-      if (node.type !== 'artboard') {
-        result.push({ node, depth });
-      }
-
+      if (node.type !== 'artboard') result.push({ node, depth });
       const isArtboard = node.type === 'artboard';
       const isExpanded = !!expandedNodes[nodeId];
-
       if (isArtboard || isExpanded) {
         const children = node.children || [];
         const nextDepth = isArtboard ? 0 : depth + 1;
         [...children].reverse().forEach(childId => traverse(childId, nextDepth));
       }
     };
-
     traverse(artboard.id, 0);
     return result;
   }, [nodes, expandedNodes, activeArtboardId]);
 
   const totalWidth = duration * pixelsPerFrame;
 
-  // Ruler markings in frames (AE Style: 0s, 10f, 20f, 1s...)
   const rulerTicks = useMemo(() => {
     const ticks = [];
-    const targetSpacing = 80; // Ideal pixel spacing between labels
+    const targetSpacing = 80;
     const rawInterval = targetSpacing / pixelsPerFrame;
-
-    // Nice frame intervals for 60fps (or generic)
     const niceIntervals = [1, 2, 5, 10, 20, 30, 60, 120, 300, 600, 1200, 1800, 3600];
-    const frameInterval = niceIntervals.reduce((prev, curr) =>
-      Math.abs(curr - rawInterval) < Math.abs(prev - rawInterval) ? curr : prev
-    );
-
-    // Virtualization limits
+    const frameInterval = niceIntervals.reduce((prev, curr) => Math.abs(curr - rawInterval) < Math.abs(prev - rawInterval) ? curr : prev);
     const startFrame = Math.max(0, Math.floor((scrollLeft - 400) / pixelsPerFrame));
     const endFrame = Math.min(duration, Math.ceil((scrollLeft + viewportWidth + 400) / pixelsPerFrame));
-
-    for (let f = startFrame; f <= endFrame; f += frameInterval) {
-      // Snap to whole frames
-      ticks.push(f);
-    }
+    for (let f = startFrame; f <= endFrame; f += frameInterval) ticks.push(f);
     return ticks;
   }, [duration, pixelsPerFrame, scrollLeft, viewportWidth]);
-
 
   const formatTime = (f: number) => {
     const s = Math.floor(f / fps);
     const frames = Math.round(f % fps);
-    return `${s}s ${frames}f`;
+    return frames === 0 ? `${s}s` : `${s}s ${frames}f`;
   };
 
-  // Keep a stable ref to the values needed inside the rAF loop (avoids re-creating the loop on every render)
+  // ── rAF needle update ─────────────────────────────────────────────────────
   const needleMetaRef = useRef({ pixelsPerFrame, timelinePaddingLeft, fps });
   needleMetaRef.current = { pixelsPerFrame, timelinePaddingLeft, fps };
 
-  // rAF loop: directly mutate needle DOM elements during ThorVG playback — no React re-renders
   useEffect(() => {
     const loop = () => {
       rafIdRef.current = requestAnimationFrame(loop);
@@ -782,93 +419,95 @@ export default function TimelinePanel() {
       const { pixelsPerFrame: ppf, timelinePaddingLeft: tpl, fps: f } = needleMetaRef.current;
       const left = frame * ppf + tpl;
       if (needleLineRef.current) needleLineRef.current.style.left = `${left}px`;
-      if (needleHeadRef.current) needleHeadRef.current.style.left = `${left - 25}px`;
+      if (needleHeadRef.current) needleHeadRef.current.style.left = `${left - 18}px`;
       if (needleTimeRef.current) {
         const s = Math.floor(frame / f);
         const fr = Math.round(frame % f);
-        needleTimeRef.current.textContent = `${s}s ${fr}f`;
+        needleTimeRef.current.textContent = fr === 0 ? `${s}s` : `${s}s ${fr}f`;
       }
     };
     rafIdRef.current = requestAnimationFrame(loop);
-    return () => {
-      if (rafIdRef.current !== null) cancelAnimationFrame(rafIdRef.current);
-    };
+    return () => { if (rafIdRef.current !== null) cancelAnimationFrame(rafIdRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const isTimelineCollapsed = useCreatorStore((state) => state.isTimelineCollapsed);
-  const setTimelineCollapsed = useCreatorStore((state) => state.setTimelineCollapsed);
-
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="w-full h-full flex flex-col overflow-hidden select-none border-t border-white/[0.06]" style={{ background: 'var(--bg-panel)' }}>
-      {/* Scene Tabs & Header */}
-      <div className="h-10 border-b border-white/[0.06] flex items-center px-2 shrink-0 justify-between" style={{ background: 'var(--bg-panel)' }}>
-        <div className="flex items-center">
-          <button
-            onClick={() => setTimelineCollapsed(!isTimelineCollapsed)}
-            className="w-8 h-8 flex items-center justify-center text-white/30 hover:text-white/60 hover:bg-hover rounded-md transition-all group"
-            title={isTimelineCollapsed ? "Expand Timeline" : "Minimize Timeline"}
-          >
-            {isTimelineCollapsed ? <ChevronRight className="w-4 h-4 -rotate-90" /> : <ChevronDown className="w-4 h-4" />}
-          </button>
+    <div className="w-full h-full flex flex-col overflow-hidden select-none" style={{ background: PANEL_BG }}>
 
-          <div className="h-full flex items-center ml-1 overflow-x-auto no-scrollbar scroll-smooth">
-            {artboards.map(ab => {
-              const isActive = ab.id === (activeArtboardId || artboards[0]?.id);
-              return (
-                <button
-                  key={ab.id}
-                  onClick={() => setActiveArtboard(ab.id)}
-                  className={`px-4 h-full flex items-center gap-2 border-b-2 transition-all duration-300 relative shrink-0 ${isActive
-                    ? "border-accent text-primary"
-                    : "border-transparent text-muted hover:text-secondary hover:bg-white/[0.02]"
-                    }`}
-                >
-                  {isActive && <div className="w-1.5 h-1.5 rounded-full bg-accent" />}
-                  <span className={`text-[11px] font-medium whitespace-nowrap`}>
-                    {ab.name}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
+      {/* ── Artboard tabs row (Frame 19) ─────────────────────────────── */}
+      <div
+        className="shrink-0 flex items-end overflow-x-auto no-scrollbar"
+        style={{ height: 32, background: TAB_STRIP_BG, borderBottom: `1px solid ${DIVIDER}` }}
+      >
+        {/* Collapse toggle */}
+        <button
+          onClick={() => setTimelineCollapsed(!isTimelineCollapsed)}
+          className="w-8 h-8 flex items-center justify-center shrink-0 transition-colors hover:opacity-70"
+          style={{ color: TEXT_DIM }}
+          title={isTimelineCollapsed ? 'Expand Timeline' : 'Collapse Timeline'}
+        >
+          {isTimelineCollapsed
+            ? <ChevronRight className="w-4 h-4 -rotate-90" />
+            : <ChevronDown className="w-4 h-4" />}
+        </button>
 
+        {/* Artboard tab buttons */}
+        {artboards.map(ab => {
+          const isActive = ab.id === (activeArtboardId || artboards[0]?.id);
+          return (
+            <button
+              key={ab.id}
+              onClick={() => setActiveArtboard(ab.id)}
+              className="px-4 h-8 flex items-center shrink-0 transition-all text-[13px]"
+              style={isActive
+                ? {
+                    background: TAB_ACTIVE_BG,
+                    color: 'rgba(252,253,255,0.94)',
+                    fontWeight: 510,
+                    border: `1px solid ${TAB_ACTIVE_BD}`,
+                    borderBottom: 'none',
+                    borderRadius: '4px 4px 0 0',
+                  }
+                : {
+                    color: TEXT_DIM,
+                    fontWeight: 400,
+                  }
+              }
+            >
+              {ab.name}
+            </button>
+          );
+        })}
+
+        {/* Expand button when collapsed */}
         {isTimelineCollapsed && (
           <button
             onClick={() => setTimelineCollapsed(false)}
-            className="px-3 py-1 flex items-center gap-1.5 text-[11px] font-medium text-accent hover:text-accent transition-all bg-accent/10 hover:bg-accent/15 rounded-md border border-accent/20 mr-2"
+            className="ml-auto mr-2 px-3 h-6 text-[11px] font-medium rounded-md border self-center transition-colors hover:opacity-80"
+            style={{ color: 'var(--accent)', borderColor: 'rgba(var(--accent-rgb), 0.2)', background: 'rgba(var(--accent-rgb), 0.1)' }}
           >
-            <span>Expand</span>
-            <ChevronRight className="w-3 h-3 -rotate-90" />
+            Expand
           </button>
         )}
       </div>
 
-      <div
-        ref={timelineRef}
-        className="flex-1 overflow-auto relative timeline-scroll-area"
-      style={{ background: 'var(--bg-panel)' }}
-      >
-        <div className="flex relative items-start" style={{ minWidth: '100%', width: totalWidth + 320 + 200, minHeight: '100%' }}>
-          {/* Left: Tracks Sidebar (STAY STICKY LEFT) */}
-          <div
-            className="w-80 border-r border-white/[0.06] flex flex-col sticky left-0 z-[60] shrink-0 min-h-full"
-            style={{ background: 'var(--bg-panel)' }}
-            onMouseDown={(e) => {
-              const target = e.target as HTMLElement;
-              const hitTrack = target.closest('[data-track-id]');
-              if (!hitTrack) {
-                setSelection([]);
-              }
-            }}
-          >
-            <div className="h-10 border-b border-white/[0.06] flex items-center px-3 justify-between sticky top-0 z-[70] sidebar-header" style={{ background: 'var(--bg-panel)' }}>
-              <div className="flex-1 flex items-center justify-between pointer-events-none">
-                <span className="text-xs font-medium text-secondary">Layers</span>
-                <span className="text-[10px] text-muted mr-8">Parent & Link</span>
-              </div>
-            </div>
+      {/* ── Main body: sidebar + scrollable track area ───────────────── */}
+      <div className="flex-1 flex overflow-hidden">
+
+        {/* ── Left Sidebar (outside scroll — no horizontal overflow) ── */}
+        <div
+          ref={sidebarRef}
+          className="w-80 shrink-0 flex flex-col overflow-y-scroll no-scrollbar overflow-x-hidden"
+          style={{ background: PANEL_BG, borderRight: `1px solid ${DIVIDER}` }}
+          onMouseDown={(e) => {
+            const target = e.target as HTMLElement;
+            if (!target.closest('[data-track-id]')) setSelection([]);
+          }}
+        >
+          {/* Ruler spacer — matches RULER_HEIGHT exactly */}
+          <div className="shrink-0" style={{ height: RULER_HEIGHT }} />
+          <div className="flex flex-col gap-0.5 px-1 pb-1">
             {sortedNodesData.map(({ node, depth }) => (
               <TimelineSidebarTrack
                 key={node.id}
@@ -882,112 +521,93 @@ export default function TimelinePanel() {
               />
             ))}
           </div>
+        </div>
 
-          {/* Right: Keyframe Grid Area */}
-          <div
-            data-timeline-grid="true"
-            className="flex-1 relative min-h-full"
-            onMouseDown={handleTimelineClick}
-          >
-            {/* Timeline Ruler & Scrubber Sticky Header */}
-            <div className="sticky top-0 z-50 pointer-events-none" style={{ height: RULER_HEIGHT }}>
-              <div
-                className="h-full border-b border-white/[0.06] bg-white/[0.02] pointer-events-auto relative overflow-hidden"
-              >
-                {/* Ruler Ticks */}
-                {rulerTicks.map((f, i) => {
-                  const s = Math.floor(f / fps);
-                  const frames = f % fps;
-                  const label = frames === 0 ? `${s}s` : `${frames}f`;
+        {/* ── Right Track Area (the only part that scrolls) ────────── */}
+        <div
+          ref={timelineRef}
+          className="flex-1 overflow-auto relative timeline-scroll-area"
+          style={{
+            background: PANEL_BG,
+            backgroundImage: [
+              `linear-gradient(to right, rgba(255,255,255,${zoomLevel > 1.5 ? '0.06' : zoomLevel > 0.8 ? '0.038' : '0.022'}) 1px, transparent 1px)`,
+              `linear-gradient(to right, rgba(255,255,255,${zoomLevel > 1.5 ? '0.02' : zoomLevel > 0.8 ? '0.013' : '0.008'}) 1px, transparent 1px)`,
+            ].join(', '),
+            backgroundSize: `${fps * pixelsPerFrame}px 100%, ${pixelsPerFrame}px 100%`,
+            backgroundPosition: `${timelinePaddingLeft}px 0`,
+            backgroundAttachment: 'local',
+          }}
+        >
+          <div className="relative" style={{ width: totalWidth + 200 }}>
 
-                  return (
-                    <div
-                      key={i}
-                      className="absolute bottom-2 h-4 flex flex-col justify-end pb-1 border-l border-white/10"
-                      style={{ left: f * pixelsPerFrame + timelinePaddingLeft }}
-                    >
-                      <span className={`text-[9px] pl-1.5 font-mono font-medium transition-colors ${frames === 0 ? 'text-accent' : 'text-muted'}`}>
-                        {label}
-                      </span>
-                    </div>
-                  );
-                })}
-
-                {/* Work Area Bar */}
+            {/* ── Grid Area ──────────────────────────────────────────── */}
+            <div
+              data-timeline-grid="true"
+              className="relative"
+              onMouseDown={handleTimelineClick}
+            >
+              {/* Ruler — sticky top */}
+              <div className="sticky top-0 z-50 pointer-events-none" style={{ height: RULER_HEIGHT }}>
                 <div
-                  className="absolute bottom-0 h-1.5 bg-white/20 z-30"
+                  className="h-full border-b pointer-events-auto relative overflow-hidden"
+                  style={{ background: PANEL_BG, borderColor: DIVIDER }}
+                >
+                  {/* Tick marks — label top, tick bottom (Figma 2001-1051) */}
+                  {rulerTicks.map((f, i) => {
+                    const s = Math.floor(f / fps);
+                    const frames = f % fps;
+                    const label = frames === 0 ? `${s}s` : `${frames}f`;
+                    const isSec = frames === 0;
+                    return (
+                      <div
+                        key={i}
+                        className="absolute top-0 flex flex-col items-start"
+                        style={{ left: f * pixelsPerFrame + timelinePaddingLeft, height: '100%' }}
+                      >
+                        <span className="text-[10px] pl-1 pt-[3px] leading-none select-none" style={{ color: isSec ? 'rgba(241,247,254,0.55)' : 'rgba(241,247,254,0.28)', fontVariantNumeric: 'tabular-nums' }}>
+                          {label}
+                        </span>
+                        <div className="flex-1" />
+                        <div className="w-px" style={{ height: isSec ? 8 : 4, background: isSec ? 'rgba(221,234,248,0.30)' : 'rgba(221,234,248,0.14)' }} />
+                      </div>
+                    );
+                  })}
+
+                {/* Work area bar */}
+                <div
+                  className="absolute bottom-0 h-[3px] z-30 rounded-sm"
                   style={{
                     left: timelinePaddingLeft + (workAreaStart ?? 0) * pixelsPerFrame,
-                    width: ((workAreaEnd ?? duration) - (workAreaStart ?? 0)) * pixelsPerFrame
+                    width: ((workAreaEnd ?? duration) - (workAreaStart ?? 0)) * pixelsPerFrame,
+                    background: 'rgba(255,255,255,0.18)',
                   }}
                   onContextMenu={handleWorkAreaContextMenu}
                 >
-                  {/* Start Handle */}
-                  <div
-                    className="absolute top-0 left-0 w-2 h-full bg-accent cursor-col-resize transform -translate-x-1 hover:w-3 hover:-translate-x-1.5 transition-all"
-                    onMouseDown={(e) => handleWorkAreaDrag(e, 'start')}
-                  />
-                  {/* End Handle */}
-                  <div
-                    className="absolute top-0 right-0 w-2 h-full bg-accent cursor-col-resize transform translate-x-1 hover:w-3 hover:translate-x-1.5 transition-all"
-                    onMouseDown={(e) => handleWorkAreaDrag(e, 'end')}
-                  />
+                  <div className="absolute top-0 left-0 w-1.5 h-full cursor-col-resize rounded-sm" style={{ background: 'var(--accent)' }} onMouseDown={(e) => handleWorkAreaDrag(e, 'start')} />
+                  <div className="absolute top-0 right-0 w-1.5 h-full cursor-col-resize rounded-sm" style={{ background: 'var(--accent)' }} onMouseDown={(e) => handleWorkAreaDrag(e, 'end')} />
                 </div>
               </div>
 
-              {/* Scrubber Handle Overlay - Also sticky */}
-              <div className="absolute top-0 left-0 w-full h-[10000px] pointer-events-none overflow-visible">
-                {/* Scrubber Line */}
-                <div
-                  ref={needleLineRef}
-                  className="absolute top-0 w-px bg-accent/50 z-10"
-                  style={{
-                    left: currentTime * pixelsPerFrame + timelinePaddingLeft,
-                    height: '100%'
-                  }}
-                />
-
-                {/* Scrubber Head (Handle) */}
-                <div
-                  ref={needleHeadRef}
-                  className="absolute top-0 flex flex-col items-center group pointer-events-auto cursor-ew-resize active:cursor-grabbing z-20"
-                  style={{ left: currentTime * pixelsPerFrame + timelinePaddingLeft - 25 }}
-                  onMouseDown={(e) => {
-                    e.stopPropagation();
-                    handleScrubberDrag(e);
-                  }}
-                >
-                  <div ref={needleTimeRef} className="px-2 py-0.5 text-white text-[10px] font-mono font-medium rounded flex items-center justify-center min-w-[50px] border border-accent/40 transform translate-y-1" style={{ background: 'var(--accent)' }}>
-                    {formatTime(currentTime)}
-                  </div>
-                  <div className="w-px h-3 bg-accent/80 mt-1.5" />
-                </div>
-              </div>
-            </div>
-
-            {/* Grid Area Offset */}
-            <div className="relative" style={{ height: 0 }}>
-              {/* Grid Lines Background - Optimized with CSS Pattern (No more 100k DOM nodes!) */}
-              <div 
-                className="absolute inset-x-0 top-0 bottom-[-100vh] z-0 pointer-events-none transition-opacity duration-300"
+              {/* Needle head — inside sticky ruler, no overflow */}
+              <div
+                ref={needleHeadRef}
+                className="absolute top-0 flex items-center justify-center pointer-events-auto cursor-ew-resize z-20 rounded-[3px]"
                 style={{
-                  paddingLeft: timelinePaddingLeft,
-                  backgroundImage: `
-                    linear-gradient(to right, rgba(255, 255, 255, 0.08) 1px, transparent 1px),
-                    linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px)
-                  `,
-                  backgroundSize: `
-                    ${fps * pixelsPerFrame}px 100%,
-                    ${pixelsPerFrame}px 100%
-                  `,
-                  backgroundPosition: `0 0`,
-                  opacity: zoomLevel > 1.5 ? 1 : (zoomLevel > 0.8 ? 0.6 : 0.4),
-                  width: totalWidth
+                  left: currentTime * pixelsPerFrame + timelinePaddingLeft - 18,
+                  height: RULER_HEIGHT - 2,
+                  marginTop: 1,
+                  minWidth: 36,
+                  background: 'var(--accent)',
                 }}
-              />
+                onMouseDown={(e) => { e.stopPropagation(); handleScrubberDrag(e); }}
+              >
+                <span ref={needleTimeRef} className="text-[10px] font-medium text-white px-1.5 leading-none">
+                  {formatTime(currentTime)}
+                </span>
+              </div>
             </div>
 
-            {/* Marquee Selection Overlay */}
+            {/* Marquee selection */}
             {marqueeRect && (
               <div
                 className="absolute border border-accent/60 bg-accent/10 z-50 pointer-events-none"
@@ -1000,8 +620,8 @@ export default function TimelinePanel() {
               />
             )}
 
-            {/* Tracks Content (Grid Part) */}
-            <div data-bg="true" className="overflow-visible relative z-0 flex-1 min-h-full" style={{ paddingLeft: timelinePaddingLeft }}>
+            {/* Keyframe tracks — gap-0.5 matches sidebar */}
+            <div className="flex flex-col gap-0.5 px-0 pb-1 relative z-0" style={{ paddingLeft: timelinePaddingLeft }}>
               {sortedNodesData.map(({ node, depth }) => (
                 <TimelineKeyframeTrack
                   key={node.id}
@@ -1016,68 +636,43 @@ export default function TimelinePanel() {
               ))}
             </div>
           </div>
+
+          {/* Needle line — absolute in scroll container, top-0 bottom-0 = panel height only, no scroll overflow */}
+          <div
+            ref={needleLineRef}
+            className="absolute top-0 bottom-0 w-px z-10 pointer-events-none"
+            style={{ left: currentTime * pixelsPerFrame + timelinePaddingLeft, background: 'var(--accent)', opacity: 0.7 }}
+          />
         </div>
 
-        {/* Work Area Context Menu */}
+        {/* Needle line — bounded to panel height, no scroll-height contribution */}
+        <div
+          ref={needleLineRef}
+          className="absolute top-0 bottom-0 w-px z-10 pointer-events-none"
+          style={{ left: currentTime * pixelsPerFrame + timelinePaddingLeft, background: 'var(--accent)', opacity: 0.7 }}
+        />
+
+        {/* Work area context menu */}
         {workAreaMenu && (
           <div
-            className="fixed bg-[#18181b] border border-white/10 shadow-2xl rounded-xl w-56 z-[100] py-1 text-sm font-medium animate-in fade-in zoom-in-95 duration-100"
-            style={{ left: workAreaMenu.x, top: workAreaMenu.y }}
-            onMouseDown={(e) => e.stopPropagation()} // Prevent auto-close when clicking inside
+            className="fixed rounded-xl w-56 z-[100] py-1 text-sm font-medium"
+            style={{ left: workAreaMenu.x, top: workAreaMenu.y, background: '#18181b', border: '1px solid rgba(255,255,255,0.10)', boxShadow: 'var(--shadow-lg)' }}
+            onMouseDown={(e) => e.stopPropagation()}
           >
-            <button
-              onClick={() => {
-                const start = workAreaStart ?? 0;
-                const end = workAreaEnd ?? duration;
-                addFlowBlock({
-                  name: 'New Segment',
-                  startFrame: start,
-                  endFrame: end,
-                  loop: true
-                });
-                setSegmentsPanelOpen(true);
-                setWorkAreaMenu(null);
-              }}
-              className="w-full text-left px-3 py-2 text-secondary hover:bg-accent/10 hover:text-accent transition-colors flex items-center gap-2"
-            >
+            <button onClick={() => { addFlowBlock({ name: 'New Segment', startFrame: workAreaStart ?? 0, endFrame: workAreaEnd ?? duration, loop: true }); setSegmentsPanelOpen(true); setWorkAreaMenu(null); }} className="w-full text-left px-3 py-2 hover:bg-accent/10 hover:text-accent transition-colors flex items-center gap-2" style={{ color: TEXT_COLOR }}>
               Set work area as segment
             </button>
-            <button
-              onClick={() => {
-                // Trim scene to work area
-                const start = workAreaStart ?? 0;
-                const end = workAreaEnd ?? duration;
-
-                // Keep duration correct
-                useCreatorStore.getState().setDuration(end - start);
-
-                // Shift all layers back by 'start'
-                const allNodes = Array.from(useCreatorStore.getState().nodes.keys());
-                useCreatorStore.getState().shiftLayers(allNodes, -start);
-
-                // Reset work area
-                useCreatorStore.getState().setWorkArea(null, null);
-                setWorkAreaMenu(null);
-
-                useCreatorStore.getState().setCurrentTime(0);
-              }}
-              className="w-full text-left px-3 py-2 text-white/90 hover:bg-white/10 transition-colors"
-            >
+            <button onClick={() => { const start = workAreaStart ?? 0; const end = workAreaEnd ?? duration; useCreatorStore.getState().setDuration(end - start); useCreatorStore.getState().shiftLayers(Array.from(useCreatorStore.getState().nodes.keys()), -start); useCreatorStore.getState().setWorkArea(null, null); setWorkAreaMenu(null); useCreatorStore.getState().setCurrentTime(0); }} className="w-full text-left px-3 py-2 hover:bg-white/10 transition-colors" style={{ color: TEXT_COLOR }}>
               Trim scene to work area
             </button>
-            <button
-              onClick={() => {
-                useCreatorStore.getState().setWorkArea(null, null);
-                setWorkAreaMenu(null);
-              }}
-              className="w-full text-left px-3 py-2 text-white/90 hover:bg-white/10 transition-colors"
-            >
+            <button onClick={() => { useCreatorStore.getState().setWorkArea(null, null); setWorkAreaMenu(null); }} className="w-full text-left px-3 py-2 hover:bg-white/10 transition-colors" style={{ color: TEXT_COLOR }}>
               Reset work area
             </button>
           </div>
         )}
-
       </div>
+      </div>
+
     </div>
   );
 }

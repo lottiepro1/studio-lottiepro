@@ -9,7 +9,8 @@ import { EASING_PRESETS, getEasingPreset, matchPreset } from '@/lib/creator/core
 import {
   Link2, ChevronRight, ChevronLeft, Settings2, AlignLeft, AlignCenter, AlignRight,
   AlignStartVertical, AlignCenterVertical, AlignEndVertical, Palette, Box, Circle,
-  ChevronDown, Activity, Minus, ArrowRight, ArrowLeft, Layers, Sliders, Eye, EyeOff, Plus, Diamond, Trash2
+  ChevronDown, Activity, Minus, ArrowRight, ArrowLeft, Layers, Sliders, Eye, EyeOff, Plus, Diamond, Trash2,
+  RefreshCw, RotateCcw
 } from 'lucide-react';
 import FontPicker from './FontPicker';
 import { getAvailableWeights, weightLabel, loadFontCSS } from '@/lib/creator/fonts/GoogleFontsService';
@@ -38,6 +39,10 @@ export default function InspectorPanel() {
   const [matteExpanded, setMatteExpanded] = useState(false);
   const [trimPathExpanded, setTrimPathExpanded] = useState(false);
   const [effectsExpanded, setEffectsExpanded] = useState(false);
+  const [showPresets, setShowPresets] = useState(false);
+  const [syncFps, setSyncFps] = useState(false);
+  const [showBlendMode, setShowBlendMode] = useState(false);
+  const [showMatte, setShowMatte] = useState(false);
 
   // Get current active artboard or fallback to first one
   const artboard = activeArtboardId ? nodes.get(activeArtboardId) : Array.from(nodes.values()).find(n => n.type === 'artboard');
@@ -442,9 +447,9 @@ export default function InspectorPanel() {
 
     return (
       <div className="flex flex-col gap-1 w-full">
-        <label className="text-[10px] text-muted uppercase tracking-wider mb-0.5">{label}</label>
+        <label className="text-[10px] text-muted mb-0.5">{label}</label>
         <div className="flex gap-2">
-          <div className="relative w-10 h-8 rounded-md bg-surface border border-white/[0.06] hover:border-white/10 transition-all overflow-hidden cursor-pointer group shadow-sm">
+          <div className="relative w-10 h-8 rounded-md bg-surface border border-[rgba(221,234,248,0.08)] hover:border-white/10 transition-all overflow-hidden cursor-pointer group shadow-sm">
             <input
               type="color"
               value={(isMixed || !val) ? "#000000" : (val as string || '#000000')}
@@ -457,7 +462,7 @@ export default function InspectorPanel() {
             placeholder={isMixed ? "Mixed" : ""}
             value={isMixed ? "" : (val as string || '')}
             onChange={(e) => handleChange(path, e.target.value)}
-            className={`flex-1 bg-surface border ${isMixed ? 'border-orange-500/30' : 'border-white/[0.06]'} rounded-md px-2 py-1 text-[11px] font-mono font-bold text-white/70 uppercase outline-none focus:border-accent/50 hover:border-white/10 transition-all shadow-sm`}
+            className={`flex-1 bg-surface border ${isMixed ? 'border-orange-500/30' : 'border-[rgba(221,234,248,0.08)]'} rounded-md px-2 py-1 text-[11px] font-mono font-bold text-white/70 uppercase outline-none focus:border-accent/50 hover:border-white/10 transition-all shadow-sm`}
           />
         </div>
       </div>
@@ -513,7 +518,7 @@ export default function InspectorPanel() {
     return (
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <label className="text-[10px] text-muted uppercase tracking-wider">{label}</label>
+          <label className="text-[10px] text-muted">{label}</label>
           <div className="flex items-center gap-1.5">
             {label === 'Stroke' && (
               <StrokeDetailsPopover
@@ -568,9 +573,9 @@ export default function InspectorPanel() {
                   }
                 }}
                 trigger={
-                  <div className="flex-1 flex items-center gap-2.5 bg-surface border border-white/[0.06] hover:border-white/10 rounded-lg p-1.5 transition-all text-left outline-none  cursor-pointer">
+                  <div className="flex-1 flex items-center gap-2.5 bg-surface border border-[rgba(221,234,248,0.08)] hover:border-white/10 rounded-lg p-1.5 transition-all text-left outline-none  cursor-pointer">
                     <div
-                      className="w-6 h-6 rounded-md border border-white/[0.06] flex-shrink-0"
+                      className="w-6 h-6 rounded-md border border-[rgba(221,234,248,0.08)] flex-shrink-0"
                       style={{ background: getPreviewBackground(), opacity: isVisible ? 1 : 0.3 }}
                     />
                     <span className={`flex-1 text-[11px] truncate ${isVisible ? 'text-secondary' : 'text-muted line-through'}`}>
@@ -608,7 +613,7 @@ export default function InspectorPanel() {
             {/* Opacity Row */}
             {opacityPath && isVisible && (
               <div className="flex items-center gap-2">
-                <div className="w-[120px] bg-surface border border-white/[0.06] hover:border-white/10 rounded-lg p-1.5 flex items-center gap-2 transition-all">
+                <div className="w-[120px] bg-surface border border-[rgba(221,234,248,0.08)] hover:border-white/10 rounded-lg p-1.5 flex items-center gap-2 transition-all">
                   <Layers size={13} className="text-white/20" />
                   <input
                     type="text"
@@ -638,14 +643,40 @@ export default function InspectorPanel() {
 
   const isRectOrEllipseOrPath = hasSelectionType('rect') || hasSelectionType('ellipse') || hasSelectionType('path') || hasSelectionType('polystar') || hasSelectionType('precomp') || hasSelectionType('group') || hasSelectionType('image');
 
+  const parseColorInput = (raw: string): string | null => {
+    const s = raw.trim();
+    // rgb(r,g,b) or rgba(r,g,b,a)
+    const rgbMatch = s.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+    if (rgbMatch) {
+      const toHex = (n: number) => n.toString(16).padStart(2, '0');
+      return `#${toHex(+rgbMatch[1])}${toHex(+rgbMatch[2])}${toHex(+rgbMatch[3])}`;
+    }
+    // hex with or without #
+    const hex = s.replace('#', '');
+    if (/^[0-9a-fA-F]{3}$/.test(hex)) {
+      return `#${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}`;
+    }
+    if (/^[0-9a-fA-F]{6}$/.test(hex)) return `#${hex}`;
+    return null;
+  };
+
+  const PRESETS = [
+    { label: 'Social Media: 1920 × 1080', w: 1920, h: 1080 },
+    { label: 'Instagram Post: 1080 × 1080', w: 1080, h: 1080 },
+    { label: 'Instagram Story: 1080 × 1920', w: 1080, h: 1920 },
+    { label: 'LinkedIn: 1200 × 627', w: 1200, h: 627 },
+    { label: 'Twitter / X: 1200 × 675', w: 1200, h: 675 },
+    { label: 'Square 500 × 500', w: 500, h: 500 },
+  ] as const;
+
   // The user explicitly requested that shapes inside groups should have their properties exposed
   // so they can be individually styled and animated (like in After Effects and LottieFiles).
   const isOnlyPrimitivesSelected = false;
 
   return (
-    <div className="w-80 h-full bg-transparent flex flex-col overflow-y-auto custom-scrollbar select-none pb-12 min-h-0">
+    <div className="w-80 h-full flex flex-col overflow-y-auto custom-scrollbar select-none pb-12 min-h-0" style={{ background: '#18191B' }}>
       {/* Header - Solid background for visual consistency */}
-      <div className="h-10 px-3 border-b border-white/[0.06] flex items-center justify-between shrink-0 sticky top-0 z-20" style={{ background: 'var(--bg-panel)' }}>
+      <div className="h-10 px-3 flex items-center justify-between shrink-0 sticky top-0 z-20" style={{ background: '#18191B', borderBottom: '1px solid rgba(221,234,248,0.08)' }}>
         <div className="flex flex-col">
           <h2 className="text-xs font-medium text-secondary">{selectedKeyframeIds.length > 0 ? 'Animation' : 'Properties'}</h2>
           {selectedNode && (
@@ -655,7 +686,7 @@ export default function InspectorPanel() {
           )}
         </div>
         {selectedNode && (
-          <div className={`w-6 h-6 rounded-md flex items-center justify-center bg-white/5 border border-white/[0.06] text-white/40 text-[10px]`}>
+          <div className={`w-6 h-6 rounded-md flex items-center justify-center bg-white/5 border border-[rgba(221,234,248,0.08)] text-white/40 text-[10px]`}>
             {selectedNode.type === 'rect' ? '■' : selectedNode.type === 'ellipse' ? '●' : selectedNode.type === 'artboard' ? '回' : selectedNode.type === 'text' ? 'T' : '⦽'}
           </div>
         )}
@@ -663,7 +694,7 @@ export default function InspectorPanel() {
 
       {/* Alignment Bar */}
       {selectedIds.length > 0 && isRectOrEllipseOrPath && (
-        <div className="px-4 py-3 border-b border-white/[0.06] flex items-center justify-between bg-black/10">
+        <div className="px-4 py-3 flex items-center justify-between bg-black/10" style={{ borderBottom: '1px solid rgba(221,234,248,0.08)' }}>
           <div className="flex items-center gap-1">
             <button
               onClick={() => useCreatorStore.getState().alignSelectedNodes('left')}
@@ -776,11 +807,11 @@ export default function InspectorPanel() {
       {selectedNode && selectedNode.type !== 'artboard' && (
         <>
           {/* Transform Section */}
-          <div className="p-4 border-b border-white/[0.06] space-y-6">
+          <div className="px-3 py-3 space-y-4" style={{ borderBottom: '1px solid rgba(221,234,248,0.08)' }}>
             <div className="flex items-center justify-between">
-              <h3 className="text-[10px] font-semibold text-muted uppercase tracking-widest">Transform</h3>
+              <h3 className="text-[11px] font-semibold">Transform</h3>
               {/* Anchor Grid */}
-              <div className="grid grid-cols-3 gap-[1.5px] bg-white/[0.02] p-[2px] rounded border border-white/[0.06]">
+              <div className="grid grid-cols-3 gap-[1.5px] bg-white/[0.02] p-[2px] rounded border border-[rgba(221,234,248,0.08)]">
                 {['top-left', 'top-center', 'top-right',
                   'center-left', 'center', 'center-right',
                   'bottom-left', 'bottom-center', 'bottom-right'].map((p) => (
@@ -799,8 +830,8 @@ export default function InspectorPanel() {
 
             <div className="space-y-4">
               <div className="space-y-1.5">
-                <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Position</label>
-                <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
+                <label className="text-[11px] pl-0.5">Position</label>
+                <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                   {renderNumberInput('transform.x', { prefix: 'X' })}
                   <div className="w-px h-3 bg-white/5 mx-1" />
                   {renderNumberInput('transform.y', { prefix: 'Y' })}
@@ -816,8 +847,8 @@ export default function InspectorPanel() {
               {!isOnlyPrimitivesSelected && (
                 <>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Scale</label>
-                    <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
+                    <label className="text-[11px] pl-0.5">Scale</label>
+                    <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                       {renderNumberInput('transform.scaleX', { prefix: 'W', displayFactor: 100 })}
                       <button
                         onClick={() => setNodeProperty(selectedNode.id, 'transform.scaleLink', !selectedNode.transform?.scaleLink)}
@@ -837,8 +868,8 @@ export default function InspectorPanel() {
 
                   <div className="flex items-center gap-4">
                     <div className="flex-1 space-y-1.5">
-                      <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Rotation</label>
-                      <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
+                      <label className="text-[11px] pl-0.5">Rotation</label>
+                      <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                         {renderNumberInput('transform.rotation', { prefix: '°', step: 1 })}
                         {selectedNode && (
                           <>
@@ -849,8 +880,8 @@ export default function InspectorPanel() {
                       </div>
                     </div>
                     <div className="flex-1 space-y-1.5">
-                      <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Opacity</label>
-                      <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
+                      <label className="text-[11px] pl-0.5">Opacity</label>
+                      <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                         {renderNumberInput('style.opacity', { prefix: '%', step: 1.0, min: 0, max: 1, displayFactor: 100 })}
                         {selectedNode && (
                           <>
@@ -863,18 +894,38 @@ export default function InspectorPanel() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Blend Mode</label>
-                    <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-2 h-9 transition-all group/pod">
-                      <select
-                        value={getCommonValue('style.blendMode') || 'normal'}
-                        onChange={(e) => handleChange('style.blendMode', e.target.value)}
-                        className="flex-1 bg-transparent border-none text-[11px] font-bold text-white/60 outline-none cursor-pointer appearance-none capitalize"
+                    <label className="text-[11px] pl-0.5" style={{ color: 'rgba(241,247,254,0.50)' }}>Blend Mode</label>
+                    <div className="relative">
+                      <button
+                        onClick={() => setShowBlendMode(v => !v)}
+                        className="w-full h-8 flex items-center justify-between rounded-[4px] px-3"
+                        style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(217,237,255,0.25)' }}
                       >
-                        {['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'].map(mode => (
-                          <option key={mode} value={mode} className="bg-surface capitalize">{mode}</option>
-                        ))}
-                      </select>
-                      <ChevronDown size={12} className="text-white/20 pointer-events-none" />
+                        <span className="text-[13px] capitalize" style={{ color: 'rgba(229,237,253,0.80)' }}>
+                          {((getCommonValue('style.blendMode') as string) || 'normal').replace(/-/g, ' ')}
+                        </span>
+                        <ChevronDown size={14} style={{ color: 'rgba(229,237,253,0.48)', flexShrink: 0 }} />
+                      </button>
+                      {showBlendMode && (
+                        <>
+                          <div className="fixed inset-0 z-[99]" onClick={() => setShowBlendMode(false)} />
+                          <div
+                            className="absolute top-full left-0 right-0 mt-1 z-[100] rounded-[4px] overflow-y-auto"
+                            style={{ background: '#27292C', border: '1px solid rgba(221,234,248,0.08)', boxShadow: '0 8px 24px rgba(0,0,0,0.4)', maxHeight: 220 }}
+                          >
+                            {['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'].map(mode => (
+                              <button
+                                key={mode}
+                                className="w-full text-left px-3 py-2 text-[13px] capitalize hover:bg-white/5 transition-colors"
+                                style={{ color: ((getCommonValue('style.blendMode') as string) || 'normal') === mode ? 'var(--accent)' : '#EDEEF0' }}
+                                onClick={() => { handleChange('style.blendMode', mode); setShowBlendMode(false); }}
+                              >
+                                {mode.replace(/-/g, ' ')}
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
                 </>
@@ -884,9 +935,9 @@ export default function InspectorPanel() {
 
           {/* Boolean Operations Section - Only when 2+ shapes selected */}
           {selectedIds.length >= 2 && (
-            <div className="p-4 border-b border-white/[0.06] space-y-4">
+            <div className="px-3 py-3 space-y-4" style={{ borderBottom: '1px solid rgba(221,234,248,0.08)' }}>
               <div className="flex items-center justify-between">
-                <h3 className="text-[10px] font-semibold text-muted uppercase tracking-widest">Boolean Operations</h3>
+                <h3 className="text-[11px] font-semibold">Boolean Operations</h3>
                 <Activity size={12} className="text-white/20" />
               </div>
               <div className="grid grid-cols-4 gap-2">
@@ -901,7 +952,7 @@ export default function InspectorPanel() {
                     onClick={() => {
                       useCreatorStore.getState().applyBooleanOperation(selectedIds, op.id as any);
                     }}
-                    className="flex flex-col items-center gap-1.5 p-2 rounded transition-all group border bg-white/[0.02] border-white/[0.06] hover:bg-white/[0.05] hover:border-white/10"
+                    className="flex flex-col items-center gap-1.5 p-2 rounded transition-all group border bg-white/[0.02] border-[rgba(221,234,248,0.08)] hover:bg-white/[0.05] hover:border-white/10"
                     title={op.label}
                   >
                     <span className="text-xl transition-colors leading-none text-white/40 group-hover:text-white/80">{op.icon}</span>
@@ -915,15 +966,15 @@ export default function InspectorPanel() {
 
           {/* Shape Properties Section */}
           {isRectOrEllipseOrPath && (
-            <div className="p-4 border-b border-white/[0.06] space-y-6">
-              <h3 className="text-[10px] font-semibold text-muted uppercase tracking-widest">Shape</h3>
+            <div className="px-3 py-3 space-y-4" style={{ borderBottom: '1px solid rgba(221,234,248,0.08)' }}>
+              <h3 className="text-[11px] font-semibold">Shape</h3>
 
               <div className="space-y-4">
                 {(hasSelectionType('rect') || hasSelectionType('group') || hasSelectionType('path') || hasSelectionType('precomp')) && (
                   <div className="space-y-4">
                     <div className="space-y-1.5">
-                      <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Size</label>
-                      <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
+                      <label className="text-[11px] pl-0.5">Size</label>
+                      <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                         {renderNumberInput('props.width', { prefix: 'W' })}
                         <button
                           onClick={() => setNodeProperty(selectedNode.id, 'transform.scaleLink', !selectedNode.transform.scaleLink)}
@@ -943,8 +994,8 @@ export default function InspectorPanel() {
 
                     {(hasSelectionType('rect') || hasSelectionType('path')) && (
                       <div className="space-y-1.5">
-                        <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Roundness</label>
-                        <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
+                        <label className="text-[11px] pl-0.5">Roundness</label>
+                        <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                           {renderNumberInput('props.roundness', { step: 1, min: 0 })}
                           {selectedNode && (
                             <>
@@ -960,8 +1011,8 @@ export default function InspectorPanel() {
 
                 {hasSelectionType('ellipse') && (
                   <div className="space-y-1.5">
-                    <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Radius</label>
-                    <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
+                    <label className="text-[11px] pl-0.5">Radius</label>
+                    <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                       {renderNumberInput('props.radiusX', { prefix: 'X', displayFactor: 2 })}
                       <div className="w-px h-3 bg-white/5 mx-1" />
                       {renderNumberInput('props.radiusY', { prefix: 'Y', displayFactor: 2 })}
@@ -976,10 +1027,10 @@ export default function InspectorPanel() {
                 )}
 
                 {hasSelectionType('polystar') && (
-                  <div className="space-y-4 pt-4 border-t border-white/[0.06]">
+                  <div className="space-y-4 pt-4 border-t border-[rgba(221,234,248,0.08)]">
                     <div className="space-y-1.5">
-                      <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Type</label>
-                      <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-2 h-9 transition-all group/pod">
+                      <label className="text-[11px] pl-0.5">Type</label>
+                      <div className="flex items-center rounded-[4px] px-2 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                         <select
                           value={getCommonValue('props.starType') || 'star'}
                           onChange={(e) => handleChange('props.starType', e.target.value)}
@@ -993,8 +1044,8 @@ export default function InspectorPanel() {
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Points</label>
-                      <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
+                      <label className="text-[11px] pl-0.5">Points</label>
+                      <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                         {renderNumberInput('props.points', { step: 1, min: 3 })}
                         {selectedNode && (
                           <>
@@ -1007,8 +1058,8 @@ export default function InspectorPanel() {
 
                     <div className="flex gap-2">
                         <div className="flex-1 space-y-1.5">
-                            <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Inner Radius</label>
-                            <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
+                            <label className="text-[11px] pl-0.5">Inner Radius</label>
+                            <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                                 {renderNumberInput('props.innerRadius', { min: 0 })}
                                 {selectedNode && (
                                     <>
@@ -1019,8 +1070,8 @@ export default function InspectorPanel() {
                             </div>
                         </div>
                         <div className="flex-1 space-y-1.5">
-                            <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Outer Radius</label>
-                            <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
+                            <label className="text-[11px] pl-0.5">Outer Radius</label>
+                            <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                                 {renderNumberInput('props.outerRadius', { min: 0 })}
                                 {selectedNode && (
                                     <>
@@ -1034,8 +1085,8 @@ export default function InspectorPanel() {
 
                     <div className="flex gap-2">
                         <div className="flex-1 space-y-1.5">
-                            <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Inner Rounding</label>
-                            <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
+                            <label className="text-[11px] pl-0.5">Inner Rounding</label>
+                            <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                                 {renderNumberInput('props.innerRoundness', { min: 0 })}
                                 {selectedNode && (
                                     <>
@@ -1046,8 +1097,8 @@ export default function InspectorPanel() {
                             </div>
                         </div>
                         <div className="flex-1 space-y-1.5">
-                            <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Outer Rounding</label>
-                            <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
+                            <label className="text-[11px] pl-0.5">Outer Rounding</label>
+                            <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                                 {renderNumberInput('props.outerRoundness', { min: 0 })}
                                 {selectedNode && (
                                     <>
@@ -1066,9 +1117,9 @@ export default function InspectorPanel() {
 
           {/* Text Properties Section */}
           {hasSelectionType('text') && (
-            <div className="p-4 border-b border-white/[0.06] space-y-6">
+            <div className="px-3 py-3 space-y-4" style={{ borderBottom: '1px solid rgba(221,234,248,0.08)' }}>
               <div className="flex items-center justify-between">
-                <h3 className="text-[10px] font-semibold text-muted uppercase tracking-widest">Text</h3>
+                <h3 className="text-[11px] font-semibold">Text</h3>
                 <Settings2 size={12} className="text-white/20" />
               </div>
 
@@ -1097,8 +1148,8 @@ export default function InspectorPanel() {
                           available[0] ?? '400'));
                     return (
                       <div className="flex-1 space-y-1.5">
-                        <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Weight</label>
-                        <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-2 h-9 transition-all group/pod">
+                        <label className="text-[11px] pl-0.5">Weight</label>
+                        <div className="flex items-center rounded-[4px] px-2 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                           <select
                             value={clampedWeight}
                             onChange={e => {
@@ -1119,8 +1170,8 @@ export default function InspectorPanel() {
 
                   {/* Font Size */}
                   <div className="w-24 space-y-1.5">
-                    <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Size</label>
-                    <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
+                    <label className="text-[11px] pl-0.5">Size</label>
+                    <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                       {renderNumberInput('props.fontSize', { prefix: 'TS', min: 1 })}
                     </div>
                   </div>
@@ -1129,14 +1180,14 @@ export default function InspectorPanel() {
                 {/* Row: Line Height + Letter Spacing */}
                 <div className="flex gap-2">
                   <div className="flex-1 space-y-1.5">
-                    <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Line Height</label>
-                    <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
+                    <label className="text-[11px] pl-0.5">Line Height</label>
+                    <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                       {renderNumberInput('props.lineHeight', { prefix: 'LH', step: 0.1, min: 0 })}
                     </div>
                   </div>
                   <div className="flex-1 space-y-1.5">
-                    <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Letter Spacing</label>
-                    <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
+                    <label className="text-[11px] pl-0.5">Letter Spacing</label>
+                    <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                       {renderNumberInput('props.letterSpacing', { prefix: 'LS', step: 1 })}
                     </div>
                   </div>
@@ -1152,8 +1203,8 @@ export default function InspectorPanel() {
                   return (
                     <div className="flex gap-2 items-end">
                       <div className="flex-1 space-y-1.5">
-                        <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Para Spacing</label>
-                        <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
+                        <label className="text-[11px] pl-0.5">Para Spacing</label>
+                        <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                           {renderNumberInput('props.paragraphSpacing', { prefix: 'PS', step: 1, min: 0 })}
                         </div>
                       </div>
@@ -1162,21 +1213,21 @@ export default function InspectorPanel() {
                           onClick={() => handleChange('props.fontStyle', isItalic ? 'normal' : 'italic')}
                           title="Italic"
                           className={`h-9 w-9 flex items-center justify-center rounded-xl text-sm font-semibold italic transition-all border ${
-                            isItalic ? 'bg-accent/15 text-accent border-accent/30' : 'text-white/30 border-white/[0.06] hover:bg-white/[0.03] hover:text-white/60 hover:border-white/10'
+                            isItalic ? 'bg-accent/15 text-accent border-accent/30' : 'text-white/30 border-[rgba(221,234,248,0.08)] hover:bg-white/[0.03] hover:text-white/60 hover:border-white/10'
                           }`}
                         >I</button>
                         <button
                           onClick={() => toggleDecoration('underline')}
                           title="Underline"
                           className={`h-9 w-9 flex items-center justify-center rounded-xl text-sm font-semibold underline transition-all border ${
-                            hasUnderline ? 'bg-accent/15 text-accent border-accent/30' : 'text-white/30 border-white/[0.06] hover:bg-white/[0.03] hover:text-white/60 hover:border-white/10'
+                            hasUnderline ? 'bg-accent/15 text-accent border-accent/30' : 'text-white/30 border-[rgba(221,234,248,0.08)] hover:bg-white/[0.03] hover:text-white/60 hover:border-white/10'
                           }`}
                         >U</button>
                         <button
                           onClick={() => toggleDecoration('strikethrough')}
                           title="Strikethrough"
                           className={`h-9 w-9 flex items-center justify-center rounded-xl text-sm font-semibold line-through transition-all border ${
-                            hasStrike ? 'bg-accent/15 text-accent border-accent/30' : 'text-white/30 border-white/[0.06] hover:bg-white/[0.03] hover:text-white/60 hover:border-white/10'
+                            hasStrike ? 'bg-accent/15 text-accent border-accent/30' : 'text-white/30 border-[rgba(221,234,248,0.08)] hover:bg-white/[0.03] hover:text-white/60 hover:border-white/10'
                           }`}
                         >S</button>
                       </div>
@@ -1186,8 +1237,8 @@ export default function InspectorPanel() {
 
                 {/* Text Type: Point / Area */}
                 <div className="space-y-1.5 pt-1">
-                  <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Text Type</label>
-                  <div className="flex bg-white/[0.02] p-1 rounded-lg border border-white/[0.06] gap-0.5">
+                  <label className="text-[11px] pl-0.5">Text Type</label>
+                  <div className="flex bg-white/[0.02] p-1 rounded-lg border border-[rgba(221,234,248,0.08)] gap-0.5">
                     {(['point', 'area'] as const).map(type => {
                       const currentWidth = getCommonValue('props.width') as number | undefined;
                       const isArea = (currentWidth || 0) > 0;
@@ -1221,14 +1272,14 @@ export default function InspectorPanel() {
                 {((getCommonValue('props.width') as number) || 0) > 0 && (
                   <div className="flex gap-2">
                     <div className="flex-1 space-y-1.5">
-                      <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Box Width</label>
-                      <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
+                      <label className="text-[11px] pl-0.5">Box Width</label>
+                      <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                         {renderNumberInput('props.width', { prefix: 'W', min: 1, step: 1 })}
                       </div>
                     </div>
                     <div className="flex-1 space-y-1.5">
-                      <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Box Height</label>
-                      <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
+                      <label className="text-[11px] pl-0.5">Box Height</label>
+                      <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                         {renderNumberInput('props.height', { prefix: 'H', min: 1, step: 1 })}
                       </div>
                     </div>
@@ -1238,7 +1289,7 @@ export default function InspectorPanel() {
                 {/* Alignment Toggles */}
                 <div className="flex gap-2 pt-2">
                   {/* Horizontal Alignment */}
-                  <div className="flex flex-1 bg-white/[0.02] p-1 rounded-lg border border-white/[0.06] gap-0.5">
+                  <div className="flex flex-1 bg-white/[0.02] p-1 rounded-lg border border-[rgba(221,234,248,0.08)] gap-0.5">
                     {[
                       { id: 'left', icon: AlignLeft },
                       { id: 'center', icon: AlignCenter },
@@ -1258,7 +1309,7 @@ export default function InspectorPanel() {
                   </div>
 
                   {/* Vertical Alignment */}
-                  <div className="flex flex-1 bg-white/[0.02] p-1 rounded-lg border border-white/[0.06] gap-0.5">
+                  <div className="flex flex-1 bg-white/[0.02] p-1 rounded-lg border border-[rgba(221,234,248,0.08)] gap-0.5">
                     {[
                       { id: 'top', icon: AlignStartVertical },
                       { id: 'middle', icon: AlignCenterVertical },
@@ -1280,11 +1331,11 @@ export default function InspectorPanel() {
 
                 {/* Content Area */}
                 <div className="space-y-1.5 pt-2">
-                  <label className="text-[10px] text-muted uppercase tracking-wider block">Text Content</label>
+                  <label className="text-[10px] text-muted block">Text Content</label>
                   <textarea
                     value={getCommonValue('props.text') === 'mixed' ? "" : (getCommonValue('props.text') as string || '')}
                     onChange={(e) => handleChange('props.text', e.target.value)}
-                    className="w-full bg-surface border border-white/[0.06] rounded-md p-2 min-h-[60px] text-[11px] font-bold text-white/70 outline-none focus:border-accent/50 hover:border-white/10 transition-all font-sans resize-none"
+                    className="w-full bg-surface border border-[rgba(221,234,248,0.08)] rounded-md p-2 min-h-[60px] text-[11px] font-bold text-white/70 outline-none focus:border-accent/50 hover:border-white/10 transition-all font-sans resize-none"
                   />
                 </div>
               </div>
@@ -1293,11 +1344,11 @@ export default function InspectorPanel() {
 
           {/* Style Section */}
           {(!selectedNode || selectedNode.type !== 'image') && !isOnlyPrimitivesSelected && (
-            <div className="p-4 border-b border-white/[0.06] space-y-6">
-              <h3 className="text-[10px] font-semibold text-muted uppercase tracking-widest">Appearance</h3>
+            <div className="px-3 py-3 space-y-4" style={{ borderBottom: '1px solid rgba(221,234,248,0.08)' }}>
+              <h3 className="text-[11px] font-semibold">Appearance</h3>
               <div className="space-y-6">
                 {renderPaintRow('Fill', 'style.fill', 'style.fillType', 'style.fillGradient', 'style.fillOpacity', 'style.fillVisible')}
-                <div className="space-y-4 pt-4 border-t border-white/[0.06]">
+                <div className="space-y-4 pt-4 border-t border-[rgba(221,234,248,0.08)]">
                   {renderPaintRow('Stroke', 'style.stroke', 'style.strokeType', 'style.strokeGradient')}
 
                   {/* New Stroke Settings Grid */}
@@ -1306,8 +1357,8 @@ export default function InspectorPanel() {
                       {/* Row 2: Weight & Alignment */}
                       <div className="flex gap-2">
                         <div className="flex-[4] space-y-1.5">
-                          <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Width</label>
-                          <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
+                          <label className="text-[11px] pl-0.5">Width</label>
+                          <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                             {renderNumberInput('style.strokeWidth', { prefix: 'W', min: 0, step: 1 })}
                             {selectedNode && (
                               <>
@@ -1319,8 +1370,8 @@ export default function InspectorPanel() {
                         </div>
 
                         <div className="flex-[5] space-y-1.5">
-                          <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Alignment</label>
-                          <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-2 h-9 transition-all group/pod">
+                          <label className="text-[11px] pl-0.5">Alignment</label>
+                          <div className="flex items-center rounded-[4px] px-2 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                             <select
                               value={getCommonValue('style.strokeAlign') || 'center'}
                               onChange={(e) => handleChange('style.strokeAlign', e.target.value)}
@@ -1338,8 +1389,8 @@ export default function InspectorPanel() {
                       {/* Row 3: Opacity & Type (Solid/Dash) */}
                       <div className="flex gap-2">
                         <div className="flex-[4] space-y-1.5">
-                          <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Opacity</label>
-                          <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
+                          <label className="text-[11px] pl-0.5">Opacity</label>
+                          <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                             {renderNumberInput('style.strokeOpacity', { prefix: '%', min: 0, max: 1, step: 1, displayFactor: 100 })}
                             {selectedNode && (
                               <>
@@ -1351,8 +1402,8 @@ export default function InspectorPanel() {
                         </div>
 
                         <div className="flex-[5] space-y-1.5">
-                          <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Style</label>
-                          <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-2 h-9 transition-all group/pod">
+                          <label className="text-[11px] pl-0.5">Style</label>
+                          <div className="flex items-center rounded-[4px] px-2 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                             <select
                               value={(getCommonValue('style.strokeDash') || '').length > 0 ? 'dashed' : 'solid'}
                               onChange={(e) => {
@@ -1397,12 +1448,12 @@ export default function InspectorPanel() {
 
           {/* Trim Path Section */}
           {isRectOrEllipseOrPath && (!selectedNode || selectedNode.type !== 'image') && !isOnlyPrimitivesSelected && (
-            <div className="p-4 border-b border-white/[0.06] space-y-4">
+            <div className="px-3 py-3 space-y-4" style={{ borderBottom: '1px solid rgba(221,234,248,0.08)' }}>
               <div
                 className="flex items-center justify-between cursor-pointer"
                 onClick={() => setTrimPathExpanded(!trimPathExpanded)}
               >
-                <h3 className="text-[10px] font-semibold text-muted uppercase tracking-widest">Trim Path</h3>
+                <h3 className="text-[11px] font-semibold">Trim Path</h3>
                 <button className="w-5 h-5 flex items-center justify-center text-white/30 hover:text-white/60 transition-colors">
                   {trimPathExpanded ? <Minus size={12} /> : <Plus size={12} />}
                 </button>
@@ -1412,8 +1463,8 @@ export default function InspectorPanel() {
                 <div className="space-y-4">
                   <div className="flex items-center gap-4">
                     <div className="flex-1 space-y-1.5">
-                      <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Start</label>
-                      <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
+                      <label className="text-[11px] pl-0.5">Start</label>
+                      <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                         {renderNumberInput('style.trimStart', { prefix: '%', min: 0, max: 1, step: 1, displayFactor: 100, defaultValue: 0 })}
                         {selectedNode && (
                           <>
@@ -1424,8 +1475,8 @@ export default function InspectorPanel() {
                       </div>
                     </div>
                     <div className="flex-1 space-y-1.5">
-                      <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">End</label>
-                      <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
+                      <label className="text-[11px] pl-0.5">End</label>
+                      <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                         {renderNumberInput('style.trimEnd', { prefix: '%', min: 0, max: 1, step: 1, displayFactor: 100, defaultValue: 1 })}
                         {selectedNode && (
                           <>
@@ -1438,8 +1489,8 @@ export default function InspectorPanel() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Offset</label>
-                    <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
+                    <label className="text-[11px] pl-0.5">Offset</label>
+                    <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                       {renderNumberInput('style.trimOffset', { prefix: '°', step: 1, defaultValue: 0 })}
                       {selectedNode && (
                         <>
@@ -1456,13 +1507,13 @@ export default function InspectorPanel() {
 
           {/* Effects Section */}
           {selectedNode && (
-            <div className="p-4 border-b border-white/[0.06] space-y-4">
+            <div className="px-3 py-3 space-y-4" style={{ borderBottom: '1px solid rgba(221,234,248,0.08)' }}>
               <div
                 className="flex items-center justify-between group/header cursor-pointer select-none"
                 onClick={() => setEffectsExpanded(!effectsExpanded)}
               >
                 <div className="flex items-center gap-2">
-                  <h3 className={`text-[10px] font-semibold uppercase tracking-widest transition-colors ${effectsExpanded ? 'text-secondary' : 'text-muted group-hover/header:text-secondary'}`}>Effects</h3>
+                  <h3 className="text-[11px] font-semibold" style={{ color: 'rgba(241,247,254,0.50)' }}>Effects</h3>
                 </div>
 
                 <div className="flex items-center gap-1">
@@ -1546,12 +1597,12 @@ export default function InspectorPanel() {
 
           {/* Matte Section */}
           {selectedNode && (
-            <div className="p-4 border-b border-white/[0.06]">
+            <div className="px-3 py-3" style={{ borderBottom: '1px solid rgba(221,234,248,0.08)' }}>
               <div
                 className="flex items-center justify-between cursor-pointer"
                 onClick={() => setMatteExpanded(!matteExpanded)}
               >
-                <h3 className="text-[10px] font-semibold text-muted uppercase tracking-widest">Matte</h3>
+                <h3 className="text-[11px] font-semibold">Matte</h3>
                 <button className="w-5 h-5 flex items-center justify-center text-white/30 hover:text-white/60 transition-colors">
                   {matteExpanded ? <Minus size={12} /> : <Plus size={12} />}
                 </button>
@@ -1559,32 +1610,51 @@ export default function InspectorPanel() {
 
               {matteExpanded && (
                 <div className="space-y-2 mt-4">
-                  <label className="text-[10px] text-muted uppercase tracking-wider">
-                    Matte Layer
-                  </label>
-                  <select
-                    value={selectedNode.matteSourceId || ''}
-                    onChange={(e) => setMatte(selectedNode.id, e.target.value || null)}
-                    className="w-full bg-surface border border-white/[0.06] rounded-md px-3 py-2 text-[11px] font-bold text-white/70 outline-none focus:border-accent/50 hover:border-white/10 transition-all cursor-pointer appearance-none"
-                    style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.3)' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center' }}
-                  >
-                    <option value="">(No matte)</option>
-                    {Array.from(nodes.values())
-                      .filter(n =>
+                  <label className="text-[11px]" style={{ color: 'rgba(241,247,254,0.50)' }}>Matte Layer</label>
+                  {(() => {
+                    const matteOptions = [
+                      { id: '', name: '(No matte)' },
+                      ...Array.from(nodes.values()).filter(n =>
                         n.type !== 'artboard' &&
                         n.id !== selectedNode.id &&
-                        // Only show top-level nodes as matte options (children of an artboard)
                         nodes.get(n.parentId || '')?.type === 'artboard' &&
-                        // Include: the currently selected matte OR layers not already used as matte
                         (n.id === selectedNode.matteSourceId || !n.matteTargetIds || n.matteTargetIds.length === 0)
-                      )
-                      .map(layer => (
-                        <option key={layer.id} value={layer.id}>
-                          {layer.name}
-                        </option>
-                      ))
-                    }
-                  </select>
+                      ).map(n => ({ id: n.id, name: n.name }))
+                    ];
+                    const currentName = matteOptions.find(o => o.id === (selectedNode.matteSourceId || ''))?.name || '(No matte)';
+                    return (
+                      <div className="relative">
+                        <button
+                          onClick={() => setShowMatte(v => !v)}
+                          className="w-full h-8 flex items-center justify-between rounded-[4px] px-3"
+                          style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(217,237,255,0.25)' }}
+                        >
+                          <span className="text-[13px] truncate" style={{ color: 'rgba(229,237,253,0.80)' }}>{currentName}</span>
+                          <ChevronDown size={14} style={{ color: 'rgba(229,237,253,0.48)', flexShrink: 0 }} />
+                        </button>
+                        {showMatte && (
+                          <>
+                            <div className="fixed inset-0 z-[99]" onClick={() => setShowMatte(false)} />
+                            <div
+                              className="absolute top-full left-0 right-0 mt-1 z-[100] rounded-[4px] overflow-y-auto"
+                              style={{ background: '#27292C', border: '1px solid rgba(221,234,248,0.08)', boxShadow: '0 8px 24px rgba(0,0,0,0.4)', maxHeight: 200 }}
+                            >
+                              {matteOptions.map(opt => (
+                                <button
+                                  key={opt.id}
+                                  className="w-full text-left px-3 py-2 text-[13px] hover:bg-white/5 transition-colors"
+                                  style={{ color: (selectedNode.matteSourceId || '') === opt.id ? 'var(--accent)' : '#EDEEF0' }}
+                                  onClick={() => { setMatte(selectedNode.id, opt.id || null); setShowMatte(false); }}
+                                >
+                                  {opt.name}
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {selectedNode.matteSourceId && (
                     <div className="flex items-center gap-2 mt-2 text-[10px] text-purple-400/70">
@@ -1604,85 +1674,255 @@ export default function InspectorPanel() {
         const targetNode = nodes.get(targetId);
         if (!targetNode) return null;
 
+        const w = targetNode.props.width || 1920;
+        const h = targetNode.props.height || 1080;
+        const fps = targetNode.props.frameRate || 60;
+        const duration = targetNode.props.duration || (fps * 5);
+
+        const matchedPreset = PRESETS.find(p => p.w === w && p.h === h);
+        const presetLabel = matchedPreset ? matchedPreset.label : `Custom: ${w} × ${h}`;
+
+        const bgColor = targetNode.props.backgroundColor || '#FFFFFF';
+        const isTransparent = !!targetNode.props.transparent;
+        const displayHex = isTransparent ? 'Transparent' : bgColor.replace('#', '').toUpperCase();
+
         return (
-          <div className="p-4 space-y-6">
-            <h3 className="text-[10px] font-semibold text-muted uppercase tracking-widest">Artboard</h3>
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-[10px] text-muted uppercase tracking-wider mb-1.5 block">Name</label>
-                <input
-                  type="text"
-                  value={targetNode.name || 'Think Motion'}
-                  onChange={(e) => updateNode(targetId, { name: e.target.value })}
-                  className="w-full bg-surface border border-white/[0.06] rounded-md px-2 h-8 text-[11px] font-bold text-white/70 outline-none focus:border-accent/50 hover:border-white/10 transition-all font-sans"
+          <div className="flex flex-col gap-3 p-3">
+            {/* Name */}
+            <div
+              className="h-7 px-2 flex items-center justify-center rounded-[3px]"
+              style={{ background: 'rgba(211,237,248,0.11)' }}
+            >
+              <input
+                type="text"
+                value={targetNode.name || 'New File'}
+                onChange={e => updateNode(targetId, { name: e.target.value })}
+                className="bg-transparent outline-none text-[14px] text-center w-full"
+                style={{ color: '#EDEEF0', fontWeight: 400 }}
+              />
+            </div>
+
+            {/* Preset selector */}
+            <div className="relative">
+              <button
+                onClick={() => setShowPresets(v => !v)}
+                className="w-full h-8 flex items-center justify-between rounded-[4px]"
+                style={{
+                  background: 'rgba(0,0,0,0.25)',
+                  border: '1px solid rgba(217,237,255,0.25)',
+                  padding: '0 12px',
+                }}
+              >
+                <span className="text-[14px] truncate text-left" style={{ color: 'rgba(229,237,253,0.48)', fontWeight: 400 }}>
+                  {presetLabel}
+                </span>
+                <ChevronDown size={16} style={{ color: 'rgba(229,237,253,0.48)', flexShrink: 0, marginLeft: 8 }} />
+              </button>
+              {showPresets && (
+                <>
+                  <div className="fixed inset-0 z-[99]" onClick={() => setShowPresets(false)} />
+                  <div
+                    className="absolute top-full left-0 right-0 mt-1 z-[100] rounded-[4px] overflow-hidden"
+                    style={{ background: '#27292C', border: '1px solid rgba(221,234,248,0.08)', boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}
+                  >
+                    {PRESETS.map(p => (
+                      <button
+                        key={p.label}
+                        className="w-full text-left px-3 py-2 text-[13px] hover:bg-white/5 transition-colors"
+                        style={{ color: '#EDEEF0' }}
+                        onClick={() => {
+                          setNodeProperties(targetId, { 'props.width': p.w, 'props.height': p.h });
+                          setShowPresets(false);
+                        }}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* W × H dimensions */}
+            <div className="flex items-center" style={{ gap: 4 }}>
+              <ArtboardNumInput
+                value={w} min={1}
+                onChange={v => setNodeProperty(targetId, 'props.width', v, { recordHistory: true })}
+              />
+              <button
+                onClick={() => setNodeProperty(targetId, 'transform.scaleLink', !targetNode.transform?.scaleLink)}
+                className="w-6 h-6 flex items-center justify-center shrink-0 rounded transition-colors"
+                style={{ color: targetNode.transform?.scaleLink ? 'var(--accent)' : 'rgba(221,234,248,0.40)' }}
+              >
+                <Link2 size={14} />
+              </button>
+              <ArtboardNumInput
+                value={h} min={1}
+                onChange={v => setNodeProperty(targetId, 'props.height', v, { recordHistory: true })}
+              />
+            </div>
+
+            {/* Separator */}
+            <div className="h-px" style={{ background: 'rgba(221,234,248,0.08)' }} />
+
+            {/* Artboard color */}
+            <div
+              className="h-8 flex items-center rounded-[4px]"
+              style={{ background: 'rgba(221,234,248,0.08)', padding: '0 12px', gap: 12 }}
+            >
+              <div
+                className="w-4 h-4 rounded-[2px] shrink-0 relative overflow-hidden cursor-pointer"
+                style={{ background: isTransparent ? 'repeating-conic-gradient(#808080 0% 25%, #fff 0% 50%) 0 0 / 8px 8px' : bgColor }}
+              >
+                {!isTransparent && (
+                  <input
+                    type="color"
+                    value={bgColor.length === 7 ? bgColor : '#FFFFFF'}
+                    onChange={e => setNodeProperty(targetId, 'props.backgroundColor', e.target.value, { recordHistory: true })}
+                    className="absolute inset-[-4px] w-[calc(100%+8px)] h-[calc(100%+8px)] border-none cursor-pointer opacity-0"
+                  />
+                )}
+              </div>
+              <input
+                type="text"
+                value={displayHex}
+                readOnly={isTransparent}
+                onChange={e => {
+                  const parsed = parseColorInput(e.target.value);
+                  if (parsed) setNodeProperty(targetId, 'props.backgroundColor', parsed, { recordHistory: false });
+                }}
+                onBlur={e => {
+                  const parsed = parseColorInput(e.target.value);
+                  if (parsed) setNodeProperty(targetId, 'props.backgroundColor', parsed, { recordHistory: true });
+                }}
+                className="flex-1 bg-transparent outline-none text-[14px]"
+                style={{ color: 'rgba(241,247,254,0.71)', fontWeight: 400 }}
+              />
+              <button
+                onClick={() => setNodeProperty(targetId, 'props.transparent', !isTransparent)}
+                className="w-4 h-4 flex items-center justify-center shrink-0 transition-colors"
+                style={{ color: isTransparent ? 'rgba(241,247,254,0.30)' : 'rgba(241,247,254,0.71)' }}
+                title={isTransparent ? 'Show background' : 'Hide background (transparent)'}
+              >
+                {isTransparent ? <EyeOff size={16} strokeWidth={1.75} /> : <Eye size={16} strokeWidth={1.75} />}
+              </button>
+            </div>
+
+            {/* Separator */}
+            <div className="h-px" style={{ background: 'rgba(221,234,248,0.08)' }} />
+
+            {/* Duration + Sync + FPS */}
+            <div className="flex items-center" style={{ gap: 6 }}>
+              <div
+                className="flex-1 h-8 flex items-center rounded-[4px] px-2"
+                style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}
+              >
+                <ArtboardDurationInput
+                  value={duration}
+                  fps={fps}
+                  onChange={frames => setNodeProperty(targetId, 'props.duration', frames, { recordHistory: true })}
                 />
               </div>
-              <div className="space-y-6 pt-2">
-                <div className="space-y-1.5">
-                  <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Dimensions</label>
-                  <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
-                    {renderNumberInput('props.width', { prefix: 'W', targetId })}
-                    <button
-                      onClick={() => setNodeProperty(targetId, 'transform.scaleLink', !targetNode.transform?.scaleLink)}
-                      className={`p-1 mx-0.5 rounded transition-colors ${targetNode.transform?.scaleLink ? 'text-accent bg-accent/15' : 'text-white/10 hover:text-white/30'}`}
-                    >
-                      <Link2 size={12} />
-                    </button>
-                    {renderNumberInput('props.height', { prefix: 'H', targetId })}
-                  </div>
-                </div>
-
-                {/* Redesigned Background Section */}
-                <div className="space-y-2">
-                  <label className="text-[10px] text-muted uppercase tracking-wider">Background</label>
-                  <div className="flex items-center gap-2 bg-surface border border-white/[0.06] rounded-lg p-1 hover:border-white/10 transition-all group">
-                    <div className="relative w-7 h-7 rounded-md border border-white/[0.06] overflow-hidden flex-shrink-0">
-                      <input
-                        type="color"
-                        value={targetNode.props.backgroundColor || '#ffffff'}
-                        onChange={(e) => setNodeProperty(targetId, 'props.backgroundColor', e.target.value, { recordHistory: true })}
-                        className="absolute inset-[-4px] w-[calc(100%+8px)] h-[calc(100%+8px)] bg-transparent border-none cursor-pointer"
-                      />
-                    </div>
-                    <input
-                      type="text"
-                      readOnly={targetNode.props.transparent}
-                      value={targetNode.props.transparent ? 'Transparent' : (targetNode.props.backgroundColor || '')}
-                      onChange={(e) => setNodeProperty(targetId, 'props.backgroundColor', e.target.value, { recordHistory: true })}
-                      className={`flex-1 bg-transparent border-none text-[11px] font-mono font-bold ${targetNode.props.transparent ? 'text-white/20' : 'text-white/70'} uppercase outline-none px-1`}
-                    />
-                    <button
-                      onClick={() => setNodeProperty(targetId, 'props.transparent', !targetNode.props.transparent)}
-                      className={`p-1.5 rounded-md transition-all ${targetNode.props.transparent ? 'text-white/20' : 'text-accent bg-accent/15'}`}
-                      title={targetNode.props.transparent ? "Show Background" : "Hide Background (Transparent)"}
-                    >
-                      {targetNode.props.transparent ? <EyeOff size={14} /> : <Eye size={14} />}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-4 pt-4 border-t border-white/[0.06]">
-                  <div className="flex-1 space-y-1.5">
-                    <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">FPS</label>
-                    <div className="flex items-center bg-surface border border-white/[0.06] hover:border-white/10 rounded-xl px-1 h-9 transition-all group/pod">
-                      {renderNumberInput('props.frameRate', { step: 1, min: 1, max: 120, targetId })}
-                    </div>
-                  </div>
-                  <div className="flex-1 space-y-1.5">
-                    <label className="text-[10px] text-muted uppercase tracking-widest pl-0.5">Duration</label>
-                    <DurationTimeInput
-                      label="Duration"
-                      value={targetNode.props.duration}
-                      fps={targetNode.props.frameRate || 60}
-                      onValueChange={(newFrames: number) => setNodeProperty(targetId, 'props.duration', newFrames, { recordHistory: true })}
-                    />
-                  </div>
-                </div>
-              </div>
+              <button
+                onClick={() => setSyncFps(v => !v)}
+                className="w-5 h-5 flex items-center justify-center shrink-0 rounded transition-colors"
+                style={{ color: syncFps ? 'var(--accent)' : 'rgba(241,247,254,0.50)' }}
+                title={syncFps ? 'Sync ON — changing FPS adjusts frame count' : 'Sync OFF'}
+              >
+                <RefreshCw size={14} strokeWidth={1.75} />
+              </button>
+              <ArtboardNumInput
+                value={fps} min={1} max={120} suffix=" FPS"
+                onChange={v => {
+                    const rounded = Math.round(v);
+                    if (syncFps) {
+                      const realTimeSecs = duration / fps;
+                      const newDuration = Math.round(realTimeSecs * rounded);
+                      setNodeProperties(targetId, {
+                        'props.frameRate': rounded,
+                        'props.duration': newDuration,
+                      });
+                    } else {
+                      setNodeProperty(targetId, 'props.frameRate', rounded, { recordHistory: true });
+                    }
+                  }}
+                />
             </div>
           </div>
         );
       })()}
+    </div>
+  );
+}
+
+function ArtboardNumInput({
+  value, min, max, suffix, onChange,
+}: {
+  value: number; min?: number; max?: number; suffix?: string;
+  onChange: (v: number) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [local, setLocal] = useState('');
+  const ref = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { if (editing) { ref.current?.focus(); ref.current?.select(); } }, [editing]);
+
+  const commit = () => {
+    setEditing(false);
+    const n = parseFloat(local);
+    if (!isNaN(n)) {
+      const clamped = Math.round(Math.max(min ?? -Infinity, Math.min(max ?? Infinity, n)));
+      onChange(clamped);
+    }
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    const startX = e.clientX;
+    const startVal = value;
+    let moved = false;
+    const onMove = (me: MouseEvent) => {
+      const dx = me.clientX - startX;
+      if (Math.abs(dx) > 3) moved = true;
+      if (moved) {
+        const sensitivity = me.shiftKey ? 10 : me.altKey ? 0.1 : 1;
+        const next = Math.round(Math.max(min ?? -Infinity, Math.min(max ?? Infinity, startVal + dx * sensitivity)));
+        onChange(next);
+      }
+    };
+    const onUp = () => {
+      if (!moved) { setLocal(value.toString()); setEditing(true); }
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = 'default';
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'ew-resize';
+  };
+
+  return (
+    <div
+      className="flex-1 h-8 flex items-center justify-center rounded-[4px] cursor-ew-resize"
+      style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}
+      onMouseDown={handleMouseDown}
+    >
+      {editing ? (
+        <input
+          ref={ref}
+          type="text"
+          className="w-full h-full bg-transparent outline-none text-[14px] text-center"
+          style={{ color: '#EDEEF0' }}
+          value={local}
+          onChange={e => setLocal(e.target.value)}
+          onBlur={commit}
+          onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
+        />
+      ) : (
+        <span className="text-[14px]" style={{ color: 'rgba(241,247,254,0.71)', fontWeight: 400 }}>
+          {value}{suffix ?? ''}
+        </span>
+      )}
     </div>
   );
 }
@@ -1704,7 +1944,7 @@ function DurationTimeInput({ label, value, fps, onValueChange }: { label: string
 
   return (
     <div className="flex flex-col gap-1 w-full group/field">
-      <div className="flex items-center h-8 bg-surface border border-white/[0.06] rounded-md hover:border-white/10 transition-all shadow-sm px-2 gap-0.5">
+      <div className="flex items-center h-8 bg-surface border border-[rgba(221,234,248,0.08)] rounded-md hover:border-white/10 transition-all shadow-sm px-2 gap-0.5">
         <TimeSegment value={mins} onValueChange={(v) => handleSegmentChange('m', v)} max={99} />
         <span className="text-white/10 font-mono text-[11px]">:</span>
         <TimeSegment value={secs} onValueChange={(v) => handleSegmentChange('s', v)} max={59} />
@@ -1712,6 +1952,60 @@ function DurationTimeInput({ label, value, fps, onValueChange }: { label: string
         <TimeSegment value={frames} onValueChange={(v) => handleSegmentChange('f', v)} max={fps - 1} />
       </div>
     </div>
+  );
+}
+
+function ArtboardDurationInput({ value, fps, onChange }: { value: number; fps: number; onChange: (frames: number) => void }) {
+  const mins = Math.floor(value / (fps * 60));
+  const secs = Math.floor((value % (fps * 60)) / fps);
+  const frames = Math.round(value % fps);
+
+  const commit = (segment: 'm' | 's' | 'f', newVal: number) => {
+    let m = mins, s = secs, f = frames;
+    if (segment === 'm') m = Math.max(0, newVal);
+    if (segment === 's') s = Math.max(0, Math.min(59, newVal));
+    if (segment === 'f') f = Math.max(0, Math.min(fps - 1, newVal));
+    const total = m * 60 * fps + s * fps + f;
+    if (total > 0) onChange(total);
+  };
+
+  return (
+    <div className="flex items-center gap-0.5 w-full justify-center">
+      <ArtboardTimeSegment value={mins} max={99} onCommit={v => commit('m', v)} />
+      <span className="text-[13px]" style={{ color: 'rgba(241,247,254,0.30)' }}>:</span>
+      <ArtboardTimeSegment value={secs} max={59} onCommit={v => commit('s', v)} />
+      <span className="text-[13px]" style={{ color: 'rgba(241,247,254,0.30)' }}>:</span>
+      <ArtboardTimeSegment value={frames} max={fps - 1} onCommit={v => commit('f', v)} />
+    </div>
+  );
+}
+
+function ArtboardTimeSegment({ value, max, onCommit }: { value: number; max: number; onCommit: (v: number) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [local, setLocal] = useState('');
+  const ref = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { if (!editing) setLocal(value.toString().padStart(2, '0')); }, [value, editing]);
+  useEffect(() => { if (editing) { ref.current?.focus(); ref.current?.select(); } }, [editing]);
+
+  const commit = () => {
+    setEditing(false);
+    const n = parseInt(local);
+    if (!isNaN(n)) onCommit(Math.min(max, Math.max(0, n)));
+  };
+
+  return (
+    <input
+      ref={ref}
+      type="text"
+      value={editing ? local : value.toString().padStart(2, '0')}
+      onFocus={() => { setEditing(true); setTimeout(() => ref.current?.select(), 0); }}
+      onBlur={commit}
+      onChange={e => setLocal(e.target.value.replace(/\D/g, '').slice(-2))}
+      onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
+      className="w-[20px] bg-transparent outline-none text-[13px] text-center cursor-pointer"
+      style={{ color: '#EDEEF0', fontWeight: 400 }}
+    />
   );
 }
 
