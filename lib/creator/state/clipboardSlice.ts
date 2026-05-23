@@ -18,6 +18,16 @@ export interface ClipboardSlice {
     pasteKeyframes: () => void;
 }
 
+// Returns a unique name that doesn't collide with any existing node name in the map.
+// "Rectangle" → "Rectangle 2" → "Rectangle 3", etc.
+function uniqueName(baseName: string, nodes: Map<string, SceneNode>): string {
+    const existingNames = new Set(Array.from(nodes.values()).map(n => n.name).filter(Boolean));
+    if (!existingNames.has(baseName)) return baseName;
+    let suffix = 2;
+    while (existingNames.has(`${baseName} ${suffix}`)) suffix++;
+    return `${baseName} ${suffix}`;
+}
+
 export const createClipboardSlice: StateCreator<CreatorStore, [["zustand/immer", never]], [], ClipboardSlice> = (set, get) => ({
     clipboard: [],
     keyframeClipboard: [],
@@ -107,6 +117,8 @@ export const createClipboardSlice: StateCreator<CreatorStore, [["zustand/immer",
                     node.parentId = artboard.id;
                     node.transform.x += offsetX;
                     node.transform.y += offsetY;
+                    // Ensure unique name so ThorVG can distinguish pasted layers from originals.
+                    if (node.name) node.name = uniqueName(node.name, newNodes);
 
                     const updatedArtboard = newNodes.get(artboard.id);
                     if (updatedArtboard) {
@@ -178,6 +190,12 @@ export const createClipboardSlice: StateCreator<CreatorStore, [["zustand/immer",
 
             const duplicatedId = cloneSubtree(originalId, originalNode.parentId);
             if (duplicatedId) {
+                // Give the duplicate a unique name so ThorVG can distinguish it from the original.
+                // Duplicate layer names cause ThorVG rendering artifacts (broken clipping, wrong bbox).
+                const dupNode = newNodes.get(duplicatedId);
+                if (dupNode && dupNode.name) {
+                    newNodes.set(duplicatedId, { ...dupNode, name: uniqueName(dupNode.name, newNodes) });
+                }
                 topLevelDuplicatedIds.push(duplicatedId);
 
                 // Add to parent's children list right after the original

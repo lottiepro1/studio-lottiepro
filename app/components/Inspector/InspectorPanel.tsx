@@ -10,7 +10,7 @@ import {
   Link2, ChevronRight, ChevronLeft, Settings2, AlignLeft, AlignCenter, AlignRight,
   AlignStartVertical, AlignCenterVertical, AlignEndVertical, Palette, Box, Circle,
   ChevronDown, Activity, Minus, ArrowRight, ArrowLeft, Layers, Sliders, Eye, EyeOff, Plus, Diamond, Trash2,
-  RefreshCw, RotateCcw
+  RotateCcw
 } from 'lucide-react';
 import FontPicker from './FontPicker';
 import { getAvailableWeights, weightLabel, loadFontCSS } from '@/lib/creator/fonts/GoogleFontsService';
@@ -40,7 +40,9 @@ export default function InspectorPanel() {
   const [trimPathExpanded, setTrimPathExpanded] = useState(false);
   const [effectsExpanded, setEffectsExpanded] = useState(false);
   const [showPresets, setShowPresets] = useState(false);
-  const [syncFps, setSyncFps] = useState(false);
+  // Local hex string while the user is actively typing in the artboard color field.
+  // null = not editing (show the stored value).
+  const [editingHex, setEditingHex] = useState<string | null>(null);
   const [showBlendMode, setShowBlendMode] = useState(false);
   const [showMatte, setShowMatte] = useState(false);
 
@@ -1370,23 +1372,23 @@ export default function InspectorPanel() {
                         </div>
 
                         <div className="flex-[5] space-y-1.5">
-                          <label className="text-[11px] pl-0.5">Alignment</label>
+                          <label className="text-[11px] pl-0.5">Line Cap</label>
                           <div className="flex items-center rounded-[4px] px-2 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                             <select
-                              value={getCommonValue('style.strokeAlign') || 'center'}
-                              onChange={(e) => handleChange('style.strokeAlign', e.target.value)}
+                              value={getCommonValue('style.strokeLinecap') as string || 'round'}
+                              onChange={(e) => handleChange('style.strokeLinecap', e.target.value)}
                               className="flex-1 bg-transparent border-none text-[11px] font-bold text-white/60 outline-none cursor-pointer appearance-none"
                             >
-                              <option value="inside" className="bg-surface">Inside</option>
-                              <option value="center" className="bg-surface">Center</option>
-                              <option value="outside" className="bg-surface">Outside</option>
+                              <option value="butt" className="bg-surface">Butt</option>
+                              <option value="round" className="bg-surface">Round</option>
+                              <option value="square" className="bg-surface">Square</option>
                             </select>
                             <ChevronDown size={12} className="text-white/20 pointer-events-none" />
                           </div>
                         </div>
                       </div>
 
-                      {/* Row 3: Opacity & Type (Solid/Dash) */}
+                      {/* Row 3: Opacity & Line Join */}
                       <div className="flex gap-2">
                         <div className="flex-[4] space-y-1.5">
                           <label className="text-[11px] pl-0.5">Opacity</label>
@@ -1402,6 +1404,25 @@ export default function InspectorPanel() {
                         </div>
 
                         <div className="flex-[5] space-y-1.5">
+                          <label className="text-[11px] pl-0.5">Line Join</label>
+                          <div className="flex items-center rounded-[4px] px-2 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
+                            <select
+                              value={getCommonValue('style.strokeLinejoin') as string || 'round'}
+                              onChange={(e) => handleChange('style.strokeLinejoin', e.target.value)}
+                              className="flex-1 bg-transparent border-none text-[11px] font-bold text-white/60 outline-none cursor-pointer appearance-none"
+                            >
+                              <option value="miter" className="bg-surface">Miter</option>
+                              <option value="round" className="bg-surface">Round</option>
+                              <option value="bevel" className="bg-surface">Bevel</option>
+                            </select>
+                            <ChevronDown size={12} className="text-white/20 pointer-events-none" />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Row 4: Style (Solid/Dash) */}
+                      <div className="flex gap-2">
+                        <div className="flex-[9] space-y-1.5">
                           <label className="text-[11px] pl-0.5">Style</label>
                           <div className="flex items-center rounded-[4px] px-2 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
                             <select
@@ -1785,15 +1806,32 @@ export default function InspectorPanel() {
               </div>
               <input
                 type="text"
-                value={displayHex}
+                value={editingHex !== null ? editingHex : displayHex}
                 readOnly={isTransparent}
+                onFocus={e => {
+                  if (!isTransparent) {
+                    const hex = bgColor.replace('#', '').toUpperCase();
+                    setEditingHex(hex);
+                    // Select all after state update so the browser sees the new value
+                    requestAnimationFrame(() => e.target.select());
+                  }
+                }}
                 onChange={e => {
-                  const parsed = parseColorInput(e.target.value);
+                  if (isTransparent) return;
+                  const raw = e.target.value;
+                  setEditingHex(raw);
+                  // Apply immediately when a complete valid hex is typed/pasted
+                  const parsed = parseColorInput(raw);
                   if (parsed) setNodeProperty(targetId, 'props.backgroundColor', parsed, { recordHistory: false });
                 }}
                 onBlur={e => {
                   const parsed = parseColorInput(e.target.value);
                   if (parsed) setNodeProperty(targetId, 'props.backgroundColor', parsed, { recordHistory: true });
+                  setEditingHex(null);
+                }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                  if (e.key === 'Escape') { setEditingHex(null); (e.target as HTMLInputElement).blur(); }
                 }}
                 className="flex-1 bg-transparent outline-none text-[14px]"
                 style={{ color: 'rgba(241,247,254,0.71)', fontWeight: 400 }}
@@ -1811,7 +1849,7 @@ export default function InspectorPanel() {
             {/* Separator */}
             <div className="h-px" style={{ background: 'rgba(221,234,248,0.08)' }} />
 
-            {/* Duration + Sync + FPS */}
+            {/* Duration + FPS */}
             <div className="flex items-center" style={{ gap: 6 }}>
               <div
                 className="flex-1 h-8 flex items-center rounded-[4px] px-2"
@@ -1823,30 +1861,19 @@ export default function InspectorPanel() {
                   onChange={frames => setNodeProperty(targetId, 'props.duration', frames, { recordHistory: true })}
                 />
               </div>
-              <button
-                onClick={() => setSyncFps(v => !v)}
-                className="w-5 h-5 flex items-center justify-center shrink-0 rounded transition-colors"
-                style={{ color: syncFps ? 'var(--accent)' : 'rgba(241,247,254,0.50)' }}
-                title={syncFps ? 'Sync ON — changing FPS adjusts frame count' : 'Sync OFF'}
-              >
-                <RefreshCw size={14} strokeWidth={1.75} />
-              </button>
               <ArtboardNumInput
                 value={fps} min={1} max={120} suffix=" FPS"
                 onChange={v => {
-                    const rounded = Math.round(v);
-                    if (syncFps) {
-                      const realTimeSecs = duration / fps;
-                      const newDuration = Math.round(realTimeSecs * rounded);
-                      setNodeProperties(targetId, {
-                        'props.frameRate': rounded,
-                        'props.duration': newDuration,
-                      });
-                    } else {
-                      setNodeProperty(targetId, 'props.frameRate', rounded, { recordHistory: true });
-                    }
-                  }}
-                />
+                  const rounded = Math.round(v);
+                  // Always preserve the real-time duration when FPS changes
+                  const durationSecs = duration / fps;
+                  const newDuration = Math.round(durationSecs * rounded);
+                  setNodeProperties(targetId, {
+                    'props.frameRate': rounded,
+                    'props.duration': newDuration,
+                  });
+                }}
+              />
             </div>
           </div>
         );
@@ -1920,7 +1947,7 @@ function ArtboardNumInput({
         />
       ) : (
         <span className="text-[14px]" style={{ color: 'rgba(241,247,254,0.71)', fontWeight: 400 }}>
-          {value}{suffix ?? ''}
+          {Number.isInteger(value) ? value : Math.round(value)}{suffix ?? ''}
         </span>
       )}
     </div>

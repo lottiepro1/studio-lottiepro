@@ -113,7 +113,10 @@ function hitTestThorVGLayers(
   for (let i = artboardChildIds.length - 1; i >= 0; i--) {
     const nodeId = artboardChildIds[i];
     const node = nodes.get(nodeId);
-    if (!node || !node.name || !node.visible || node.type === 'artboard') continue;
+    if (!node || !node.name || !node.visible || node.locked || node.type === 'artboard') continue;
+    // Temporal visibility: layers outside their active time range are not on screen — skip.
+    // After Effects / LottieFiles never select layers that are off-screen at the current frame.
+    if (currentTime < node.inPoint || currentTime > node.outPoint) continue;
     // getLayerBoundingBox looks up by name — skip duplicate names (ThorVG would return wrong layer)
     const nameIsUnique = artboardChildIds.filter(id => nodes.get(id)?.name === node.name).length === 1;
     if (!nameIsUnique) continue;
@@ -132,6 +135,10 @@ function hitTestThorVGLayers(
       const bboxW = Math.sqrt(e0x * e0x + e0y * e0y);
       const bboxH = Math.sqrt(e1x * e1x + e1y * e1y);
       if (bboxW > maxW && bboxH > maxH) continue;
+      // Reject degenerate (zero-size) bboxes — null layers and invisible content return all-zero
+      // coords from ThorVG. A zero bbox passes the OBB point-in-test for ANY click position
+      // (0 >= 0 && 0 <= 0 is always true), so it must be rejected before that test.
+      if (bboxW < 1 || bboxH < 1) continue;
 
       // OBB point-in-test: project (cx,cy) onto the two edge axes from top-left corner.
       // P is inside iff 0 ≤ P·e0 ≤ |e0|² and 0 ≤ P·e1 ≤ |e1|²
@@ -223,6 +230,88 @@ function processStateInteraction(eventName: string, targetId: string | null, sta
 // Below this size the handles overlap the shape — user must zoom in to access them.
 const MIN_HANDLE_SCREEN_PX = 20;
 
+// ---------- Path-edit helpers ----------
+
+function evalCubicBezier(
+  P0: {x:number;y:number}, P1: {x:number;y:number},
+  P2: {x:number;y:number}, P3: {x:number;y:number}, t: number
+): {x:number;y:number} {
+  const u = 1 - t;
+  return {
+    x: u*u*u*P0.x + 3*u*u*t*P1.x + 3*u*t*t*P2.x + t*t*t*P3.x,
+    y: u*u*u*P0.y + 3*u*u*t*P1.y + 3*u*t*t*P2.y + t*t*t*P3.y,
+  };
+}
+
+/** Sample each segment at N points; return the closest position to (mx,my). */
+function findClosestSegmentPoint(
+  points: any[], mx: number, my: number, closed = true, samples = 50
+): { segmentIndex: number; t: number; localX: number; localY: number; dist: number } | null {
+  if (points.length < 2) return null;
+  let best: { segmentIndex: number; t: number; localX: number; localY: number; dist: number } | null = null;
+  const n = points.length;
+  const segCount = closed ? n : n - 1;
+  for (let i = 0; i < segCount; i++) {
+    const j = (i + 1) % n;
+    const p0 = points[i], p3 = points[j];
+    const P0 = { x: p0.x, y: p0.y };
+    const P1 = { x: p0.x + p0.outX, y: p0.y + p0.outY };
+    const P2 = { x: p3.x + p3.inX,  y: p3.y + p3.inY };
+    const P3 = { x: p3.x, y: p3.y };
+    for (let s = 0; s <= samples; s++) {
+      const t = s / samples;
+      const pt = evalCubicBezier(P0, P1, P2, P3, t);
+      const d = Math.sqrt((pt.x - mx) ** 2 + (pt.y - my) ** 2);
+      if (!best || d < best.dist) {
+        best = { segmentIndex: i, t, localX: pt.x, localY: pt.y, dist: d };
+      }
+    }
+  }
+  return best;
+}
+
+/** De Casteljau split: insert a new vertex on segment [segIdx → segIdx+1] at parameter t. */
+function insertPointOnSegment(points: any[], segIdx: number, t: number): any[] {
+  const n = points.length;
+  const i = segIdx;
+  const j = (i + 1) % n;
+  const p0 = points[i], p3 = points[j];
+  const P0 = { x: p0.x, y: p0.y };
+  const P1 = { x: p0.x + p0.outX, y: p0.y + p0.outY };
+  const P2 = { x: p3.x + p3.inX,  y: p3.y + p3.inY };
+  const P3 = { x: p3.x, y: p3.y };
+
+  const lerp = (a: {x:number;y:number}, b: {x:number;y:number}, t: number) =>
+    ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+
+  const Q1 = lerp(P0, P1, t);
+  const Q2 = lerp(P1, P2, t);
+  const Q3 = lerp(P2, P3, t);
+  const R1 = lerp(Q1, Q2, t);
+  const R2 = lerp(Q2, Q3, t);
+  const S  = lerp(R1, R2, t);
+
+  const newPoints = [...points];
+  // Update handles on existing vertices
+  newPoints[i] = { ...p0, outX: Q1.x - P0.x, outY: Q1.y - P0.y };
+  newPoints[j] = { ...p3, inX: Q3.x - P3.x,  inY: Q3.y - P3.y };
+
+  // New vertex to insert
+  const newVtx = {
+    x: S.x, y: S.y,
+    inX: R1.x - S.x, inY: R1.y - S.y,
+    outX: R2.x - S.x, outY: R2.y - S.y,
+  };
+
+  // Insert after index i (wrapping: if j === 0 it's the last segment of a closed path)
+  if (j === 0) {
+    newPoints.push(newVtx);
+  } else {
+    newPoints.splice(j, 0, newVtx);
+  }
+  return newPoints;
+}
+
 // Custom rotation cursor: a circular arrow with a white outline so it's readable on any background.
 const _rotateSVG = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><path d="M15 3 A8 8 0 1 0 17 10" fill="none" stroke="white" stroke-width="3" stroke-linecap="round"/><path d="M17 10 L14 6 M17 10 L13 12" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 3 A8 8 0 1 0 17 10" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round"/><path d="M17 10 L14 6 M17 10 L13 12" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const ROTATE_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(_rotateSVG)}") 10 10, grab`;
@@ -243,6 +332,8 @@ export default function CanvasView() {
   const [viewport, setViewport] = useState({ zoom: 1, pan: { x: 0, y: 0 } });
   const [hoveredHandle, setHoveredHandle] = useState<{ nodeId: string, handleIndex: number, type: 'resize' | 'rotate' } | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const [selectedVertexIndex, setSelectedVertexIndex] = useState<number | null>(null);
+  const [segmentHover, setSegmentHover] = useState<{ segmentIndex: number; t: number; localX: number; localY: number; screenX: number; screenY: number } | null>(null);
   const [textEditState, setTextEditState] = useState<TextEditState | null>(null);
   const hiddenInputRef = useRef<HTMLInputElement>(null);
   const [fontsLoaded, setFontsLoaded] = useState(0);
@@ -368,6 +459,11 @@ export default function CanvasView() {
   const setDuration = useCreatorStore((state) => state.setDuration);
   const editingNodeId = useCreatorStore((state) => state.editingNodeId);
   const setEditingNode = useCreatorStore((state) => state.setEditingNode);
+  const activeGroupStack = useCreatorStore((state) => state.activeGroupStack);
+  const activeGroupId = activeGroupStack[activeGroupStack.length - 1] ?? null;
+  const setActiveGroup = useCreatorStore((state) => state.setActiveGroup);
+  const pushActiveGroup = useCreatorStore((state) => state.pushActiveGroup);
+  const popActiveGroup = useCreatorStore((state) => state.popActiveGroup);
   const setNodeProperty = useCreatorStore((state) => state.setNodeProperty);
   const setNodeProperties = useCreatorStore((state) => state.setNodeProperties);
   const activeArtboardId = useCreatorStore((state) => state.activeArtboardId);
@@ -381,11 +477,12 @@ export default function CanvasView() {
     currentSelectedIds: string[],
     currentNodes: Map<string, SceneNode>,
     currentViewTransform: DOMMatrix,
-    currentTick: number
+    currentTick: number,
+    currentActiveArtboardId?: string
   ) => {
     const resizeRadius = 8;
     const rotateRadiusInner = 10;
-    const rotateRadiusOuter = 35; // The "Figma zone" outside corners
+    const rotateRadiusOuter = 20; // tight zone just outside the handle, matching AE/Figma behaviour
 
     const targets = currentSelectedIds.length > 0 ? currentSelectedIds : [];
 
@@ -444,7 +541,7 @@ export default function CanvasView() {
       const node = currentNodes.get(nodeId);
       if (!node || !isNodeSelectable(nodeId, currentNodes)) continue;
 
-      const worldMatrix = getWorldMatrix(nodeId, currentNodes, currentTick);
+      const worldMatrix = getWorldMatrix(nodeId, currentNodes, currentTick, currentActiveArtboardId);
       const combinedMatrix = currentViewTransform.multiply(worldMatrix);
 
       // Get dimensions
@@ -483,15 +580,29 @@ export default function CanvasView() {
         width = lb.width; height = lb.height; offsetX = lb.x; offsetY = lb.y;
       }
 
+      // For outside-stroke rect/ellipse, the visual boundary extends S/2 beyond the fill edge.
+      // SelectionOverlay shows handles at the ThorVG bbox corners (stroke-inclusive), so we
+      // must expand the logical handle positions to match, or the resize zone won't align with
+      // the visual handles and the rotation zone will fire instead.
+      const strokeHalf = ((node.style.strokeAlign ?? 'outside') === 'outside' &&
+        (node.type === 'rect' || node.type === 'ellipse') &&
+        node.type !== 'artboard')
+        ? (node.style.strokeWidth || 0) / 2
+        : 0;
+      const hOffsetX = offsetX - strokeHalf;
+      const hOffsetY = offsetY - strokeHalf;
+      const hWidth = width + strokeHalf * 2;
+      const hHeight = height + strokeHalf * 2;
+
       const handles = [
-        { ...localToScreen(offsetX, offsetY, combinedMatrix), index: 0 },         // nw
-        { ...localToScreen(offsetX + width / 2, offsetY, combinedMatrix), index: 1 }, // n
-        { ...localToScreen(offsetX + width, offsetY, combinedMatrix), index: 2 },     // ne
-        { ...localToScreen(offsetX + width, offsetY + height / 2, combinedMatrix), index: 3 }, // e
-        { ...localToScreen(offsetX + width, offsetY + height, combinedMatrix), index: 4 },     // se
-        { ...localToScreen(offsetX + width / 2, offsetY + height, combinedMatrix), index: 5 }, // s
-        { ...localToScreen(offsetX, offsetY + height, combinedMatrix), index: 6 },         // sw
-        { ...localToScreen(offsetX, offsetY + height / 2, combinedMatrix), index: 7 },     // w
+        { ...localToScreen(hOffsetX, hOffsetY, combinedMatrix), index: 0 },         // nw
+        { ...localToScreen(hOffsetX + hWidth / 2, hOffsetY, combinedMatrix), index: 1 }, // n
+        { ...localToScreen(hOffsetX + hWidth, hOffsetY, combinedMatrix), index: 2 },     // ne
+        { ...localToScreen(hOffsetX + hWidth, hOffsetY + hHeight / 2, combinedMatrix), index: 3 }, // e
+        { ...localToScreen(hOffsetX + hWidth, hOffsetY + hHeight, combinedMatrix), index: 4 },     // se
+        { ...localToScreen(hOffsetX + hWidth / 2, hOffsetY + hHeight, combinedMatrix), index: 5 }, // s
+        { ...localToScreen(hOffsetX, hOffsetY + hHeight, combinedMatrix), index: 6 },         // sw
+        { ...localToScreen(hOffsetX, hOffsetY + hHeight / 2, combinedMatrix), index: 7 },     // w
       ];
 
       // Skip handle detection when the shape is too small on screen — handles would
@@ -512,8 +623,16 @@ export default function CanvasView() {
         for (const c of corners) {
           const dist = Math.sqrt((screenX - c.x) ** 2 + (screenY - c.y) ** 2);
           if (dist >= rotateRadiusInner && dist <= rotateRadiusOuter) {
-            // Only allow rotation if NOT inside the actual node geometry
-            if (!hitTestNode(node, scenePoint.x, scenePoint.y, currentNodes, currentTick)) {
+            // Only allow rotation if NOT inside the visual shape (fill + outside stroke).
+            // hitTestNode only checks fill; also exclude the stroke expansion zone explicitly.
+            const isInsideFill = hitTestNode(node, scenePoint.x, scenePoint.y, currentNodes, currentTick, currentActiveArtboardId);
+            let isInsideStroke = false;
+            if (!isInsideFill && strokeHalf > 0) {
+              const localPt = new DOMPoint(screenX, screenY).matrixTransform(combinedMatrix.inverse());
+              isInsideStroke = localPt.x >= offsetX - strokeHalf && localPt.x <= offsetX + width + strokeHalf &&
+                               localPt.y >= offsetY - strokeHalf && localPt.y <= offsetY + height + strokeHalf;
+            }
+            if (!isInsideFill && !isInsideStroke) {
               return { nodeId, handleIndex: c.index, type: 'rotate' as const };
             }
           }
@@ -529,14 +648,15 @@ export default function CanvasView() {
     id: string,
     currentNodes: Map<string, SceneNode>,
     currentViewTransform: DOMMatrix,
-    currentTick: number
+    currentTick: number,
+    currentActiveArtboardId?: string
   ) => {
     const node = currentNodes.get(id);
     if (!node || !isNodeSelectable(id, currentNodes)) return null;
 
     const checkGradient = (gradient: any, path: string) => {
       if (!gradient) return null;
-      const worldMatrix = getWorldMatrix(id, currentNodes, currentTick);
+      const worldMatrix = getWorldMatrix(id, currentNodes, currentTick, currentActiveArtboardId);
       const combinedMatrix = currentViewTransform.multiply(worldMatrix);
 
       const start = localToScreen(gradient.start.x, gradient.start.y, combinedMatrix);
@@ -851,6 +971,12 @@ export default function CanvasView() {
           state.setEditingNode(null);
           return;
         }
+        if (state.activeGroupStack.length > 0) {
+          const exitingId = state.activeGroupStack[state.activeGroupStack.length - 1];
+          state.popActiveGroup();
+          state.setSelection([exitingId]);
+          return;
+        }
 
         // Cancel any active interaction
         const currentInteraction = interactionRef.current;
@@ -1153,7 +1279,7 @@ export default function CanvasView() {
 
       // ThorVG (z-21) covers all shape content — Canvas2D only draws artboard chrome
       // (background, border, grid, guides). Skip layer content whenever ThorVG is active.
-      const skipLottieContent = !!(dotlottieRef.current);
+      const skipLottieContent = !!(dotlottieRef.current) && !editingNodeId;
 
       rendererRef.current.render(
         artboard.id,
@@ -1195,11 +1321,15 @@ export default function CanvasView() {
     if (interaction.type === 'resize') return RESIZE_CURSORS[interaction.handleIndex ?? 0] || 'nw-resize';
     // During an active rotate keep the rotation cursor
     if (interaction.type === 'rotate') return ROTATE_CURSOR;
+    // During active path-vertex drag keep the move cursor
+    if (interaction.type === 'edit_path') return 'move';
     if (interaction.type !== 'none') return 'grabbing';
     if (activeTool !== 'select') return 'crosshair';
 
+    // In path edit mode: crosshair when hovering a segment edge, move otherwise
+    if (editingNodeId) return segmentHover ? 'crosshair' : 'move';
+
     if (hoveredHandle) {
-      if (editingNodeId === hoveredHandle.nodeId) return 'default';
       if (hoveredHandle.type === 'rotate') return ROTATE_CURSOR;
       return RESIZE_CURSORS[hoveredHandle.handleIndex] || 'default';
     }
@@ -1297,12 +1427,44 @@ export default function CanvasView() {
 
           const points = (AnimationUtils.getPropertyValue(node, 'props.points', currentTime) || []) as any[];
           const hitRadius = 10 / viewport.zoom; // Visual radius adjusted for zoom
+          const initX = AnimationUtils.getPropertyValue(node, 'transform.x', currentTime) ?? node.transform.x;
+          const initY = AnimationUtils.getPropertyValue(node, 'transform.y', currentTime) ?? node.transform.y;
+
+          // Check for segment hover click — insert a new vertex via de Casteljau subdivision
+          // (must be before the vertex loop so `points` is in scope)
+          if (segmentHover) {
+            useCreatorStore.getState().pushToHistory('Add Path Point');
+            const { segmentIndex, t: segT } = segmentHover;
+            const pathKfs = node.animations?.['props.points'];
+            if (pathKfs && pathKfs.length > 0) {
+              // Insert at the same segment/t into EVERY keyframe so point counts stay equal.
+              // Without this, v1.length !== v2.length → interpolation snaps instead of morphs.
+              const store = useCreatorStore.getState();
+              for (const kf of pathKfs) {
+                const kfPoints = Array.isArray(kf.value) ? kf.value : points;
+                const updated = insertPointOnSegment(kfPoints, segmentIndex, segT);
+                store.updateKeyframe(editingNodeId, 'props.points', kf.id, { value: updated });
+              }
+            } else {
+              // No animation keyframes — just update the static value
+              const updatedPoints = insertPointOnSegment(points, segmentIndex, segT);
+              setNodeProperty(editingNodeId, 'props.points', updatedPoints, { ignoreAnchorFollowing: true });
+            }
+            const updatedPoints = insertPointOnSegment(points, segmentIndex, segT);
+            const newIdx = segmentIndex === points.length - 1
+              ? updatedPoints.length - 1
+              : segmentIndex + 1;
+            setSelectedVertexIndex(newIdx);
+            setSegmentHover(null);
+            return;
+          }
 
           for (let i = 0; i < points.length; i++) {
             const p = points[i];
 
             // Check Vertex
             if (Math.sqrt((localMouse.x - p.x) ** 2 + (localMouse.y - p.y) ** 2) < hitRadius) {
+              setSelectedVertexIndex(i);
               setInteraction({
                 type: 'edit_path',
                 nodeId: editingNodeId,
@@ -1310,16 +1472,39 @@ export default function CanvasView() {
                 handleType: 'vertex',
                 startPos: { x: screenX, y: screenY },
                 initialProps: { ...node.props, points },
-                initialLocalMousePos: { x: localMouse.x, y: localMouse.y }
+                initialLocalMousePos: { x: localMouse.x, y: localMouse.y },
+                initialWorldMatrix: worldMatrix,
+                initialOffsetX: initX,
+                initialOffsetY: initY,
               });
               return;
             }
 
-            // Check Control Handles
-            const inH = { x: p.x + p.inX, y: p.y + p.inY };
-            const outH = { x: p.x + p.outX, y: p.y + p.outY };
+            // Check Control Handles (only for selected vertex or vertices with existing handles).
+            // For a zero-handle selected vertex, use the same tangent-aligned default positions
+            // that SelectionOverlay renders so that hit detection matches the visual circles.
+            let effInX = p.inX, effInY = p.inY;
+            let effOutX = p.outX, effOutY = p.outY;
+            if (i === selectedVertexIndex && p.inX === 0 && p.inY === 0 && p.outX === 0 && p.outY === 0) {
+              const n = points.length;
+              const prev = points[(i - 1 + n) % n];
+              const next = points[(i + 1) % n];
+              let tx = next.x - prev.x, ty = next.y - prev.y;
+              const tlen = Math.sqrt(tx * tx + ty * ty);
+              if (tlen > 0.001) {
+                tx /= tlen; ty /= tlen;
+                const d1 = Math.sqrt((p.x - prev.x) ** 2 + (p.y - prev.y) ** 2);
+                const d2 = Math.sqrt((next.x - p.x) ** 2 + (next.y - p.y) ** 2);
+                const hLen = Math.min(d1, d2) / 3;
+                effInX = -tx * hLen; effInY = -ty * hLen;
+                effOutX =  tx * hLen; effOutY =  ty * hLen;
+              }
+            }
+            const inH  = { x: p.x + effInX,  y: p.y + effInY  };
+            const outH = { x: p.x + effOutX, y: p.y + effOutY };
 
-            if (Math.sqrt((localMouse.x - inH.x) ** 2 + (localMouse.y - inH.y) ** 2) < hitRadius) {
+            if ((i === selectedVertexIndex || p.inX !== 0 || p.inY !== 0) &&
+                Math.sqrt((localMouse.x - inH.x) ** 2 + (localMouse.y - inH.y) ** 2) < hitRadius) {
               setInteraction({
                 type: 'edit_path',
                 nodeId: editingNodeId,
@@ -1327,12 +1512,16 @@ export default function CanvasView() {
                 handleType: 'in',
                 startPos: { x: screenX, y: screenY },
                 initialProps: { ...node.props, points },
-                initialLocalMousePos: { x: localMouse.x, y: localMouse.y }
+                initialLocalMousePos: { x: localMouse.x, y: localMouse.y },
+                initialWorldMatrix: worldMatrix,
+                initialOffsetX: initX,
+                initialOffsetY: initY,
               });
               return;
             }
 
-            if (Math.sqrt((localMouse.x - outH.x) ** 2 + (localMouse.y - outH.y) ** 2) < hitRadius) {
+            if ((i === selectedVertexIndex || p.outX !== 0 || p.outY !== 0) &&
+                Math.sqrt((localMouse.x - outH.x) ** 2 + (localMouse.y - outH.y) ** 2) < hitRadius) {
               setInteraction({
                 type: 'edit_path',
                 nodeId: editingNodeId,
@@ -1340,7 +1529,10 @@ export default function CanvasView() {
                 handleType: 'out',
                 startPos: { x: screenX, y: screenY },
                 initialProps: { ...node.props, points },
-                initialLocalMousePos: { x: localMouse.x, y: localMouse.y }
+                initialLocalMousePos: { x: localMouse.x, y: localMouse.y },
+                initialWorldMatrix: worldMatrix,
+                initialOffsetX: initX,
+                initialOffsetY: initY,
               });
               return;
             }
@@ -1348,7 +1540,9 @@ export default function CanvasView() {
         }
 
         // If we reach here, we are in isolation mode but didn't hit a vertex/handle.
-        // Check if we hit another node to exit isolation.
+        // Deselect any selected vertex first; if clicked completely outside the path, exit isolation.
+        setSelectedVertexIndex(null);
+        setSegmentHover(null);
         const artboard = activeArtboardId ? nodes.get(activeArtboardId) : Array.from(nodes.values()).find(n => n.type === 'artboard');
         const artboardLocal = getArtboardLocalPos(canvasPos);
         const hNodeId = findNodeAtPoint(artboardLocal.x, artboardLocal.y, nodes, artboard?.id || null, e.ctrlKey || e.metaKey, currentTime, artboard?.id || undefined);
@@ -1359,7 +1553,7 @@ export default function CanvasView() {
 
       // 1.5. Check for gradient handle hits
       if (selectedIds.length === 1) {
-        const gradHandle = getGradientHandleAtPoint(screenX, screenY, selectedIds[0], nodes, viewTransform, currentTime);
+        const gradHandle = getGradientHandleAtPoint(screenX, screenY, selectedIds[0], nodes, viewTransform, currentTime, activeArtboardId || undefined);
         if (gradHandle) {
           setInteraction({
             type: 'edit_gradient',
@@ -1419,7 +1613,7 @@ export default function CanvasView() {
         }
       }
 
-      const handleHit = getHandleAtPoint(screenX, screenY, selectedIds, nodes, viewTransform, currentTime);
+      const handleHit = getHandleAtPoint(screenX, screenY, selectedIds, nodes, viewTransform, currentTime, activeArtboardId || undefined);
       // Disable resize/rotate for the node being edited in isolation mode
       if (handleHit && handleHit.nodeId === editingNodeId) {
         // Do nothing, let it fall through to potential move or marquee
@@ -1654,6 +1848,22 @@ export default function CanvasView() {
         hitNodeId = findNodeAtPoint(artboardLocal.x, artboardLocal.y, nodes, artboard?.id || null, e.ctrlKey || e.metaKey, currentTime, artboard?.id || undefined);
       }
 
+      // When inside a group: redirect all clicks to group children.
+      // ThorVG may return the group's ID — override with the actual child at this position.
+      if (activeGroupId) {
+        // deep=false: only match direct children of the active group (enables level-by-level drill-down)
+        const childHit = findNodeAtPoint(artboardLocal.x, artboardLocal.y, nodes, activeGroupId, false, currentTime, artboard?.id || undefined);
+        if (childHit) {
+          hitNodeId = childHit;
+        } else {
+          // Clicked outside the entered group → exit one level
+          popActiveGroup();
+          setSelection([activeGroupId]);
+          setInteraction({ type: 'none', startPos: { x: 0, y: 0 } });
+          return;
+        }
+      }
+
       if (hitNodeId) {
         let nextSelectedIds = selectedIds;
         if (e.shiftKey) {
@@ -1791,6 +2001,12 @@ export default function CanvasView() {
     }
   }, [interaction.type]);
 
+  // Reset selected vertex and segment hover when leaving path-edit mode
+  useEffect(() => {
+    setSelectedVertexIndex(null);
+    setSegmentHover(null);
+  }, [editingNodeId]);
+
   // Tool Switching Cleanup
   const prevToolRef = useRef(activeTool);
   useEffect(() => {
@@ -1882,7 +2098,7 @@ export default function CanvasView() {
     }
 
     if (interaction.type === 'none' && activeTool === 'select') {
-      const hit = getHandleAtPoint(screenX, screenY, selectedIds, nodes, viewTransform, currentTime);
+      const hit = getHandleAtPoint(screenX, screenY, selectedIds, nodes, viewTransform, currentTime, activeArtboardId || undefined);
       setHoveredHandle(hit);
       const artboard = activeArtboardId ? nodes.get(activeArtboardId) : Array.from(nodes.values()).find(n => n.type === 'artboard');
       const artboardLocal = getArtboardLocalPos(canvasPos);
@@ -1904,7 +2120,47 @@ export default function CanvasView() {
       if (!hoveredId) {
         hoveredId = findNodeAtPoint(artboardLocal.x, artboardLocal.y, nodes, artboard?.id || null, e.ctrlKey || e.metaKey, currentTime, artboard?.id || undefined);
       }
-      setHoveredNodeId(hoveredId);
+      // When inside a group, restrict hover to group children
+      if (activeGroupId) {
+        const childHovered = findNodeAtPoint(artboardLocal.x, artboardLocal.y, nodes, activeGroupId, false, currentTime, activeArtboardId || undefined);
+        setHoveredNodeId(childHovered);
+      } else {
+        setHoveredNodeId(hoveredId);
+      }
+
+      // Segment hover detection for path-edit mode (add-point crosshair)
+      if (editingNodeId) {
+        const pathNode = nodes.get(editingNodeId);
+        if (pathNode && pathNode.type === 'path') {
+          const worldMatrix = getWorldMatrix(editingNodeId, nodes, currentTime, activeArtboardId || undefined);
+          const combinedMatrix = viewTransform.multiply(worldMatrix);
+          const inv = combinedMatrix.inverse();
+          const localMouse = new DOMPoint(screenX, screenY).matrixTransform(inv);
+          const pts = (AnimationUtils.getPropertyValue(pathNode, 'props.points', currentTime) || []) as any[];
+          const VERTEX_PRIORITY_RADIUS = 12 / viewport.zoom;
+          const SEGMENT_SNAP_RADIUS = 8 / viewport.zoom;
+          let nearVertex = false;
+          for (const vp of pts) {
+            if (Math.sqrt((localMouse.x - vp.x) ** 2 + (localMouse.y - vp.y) ** 2) < VERTEX_PRIORITY_RADIUS) {
+              nearVertex = true;
+              break;
+            }
+          }
+          if (!nearVertex) {
+            const closest = findClosestSegmentPoint(pts, localMouse.x, localMouse.y, pathNode.props?.closed !== false);
+            if (closest && closest.dist < SEGMENT_SNAP_RADIUS) {
+              const screenPos = localToScreen(closest.localX, closest.localY, combinedMatrix);
+              setSegmentHover({ ...closest, screenX: screenPos.x, screenY: screenPos.y });
+            } else {
+              setSegmentHover(null);
+            }
+          } else {
+            setSegmentHover(null);
+          }
+        }
+      } else {
+        setSegmentHover(null);
+      }
 
       // Measurement logic
       if ((isAltPressed || e.altKey) && selectedIds.length > 0) {
@@ -2421,8 +2677,8 @@ export default function CanvasView() {
       // 4. Update Properties
       const updates: any = {};
       if (node.type === 'rect' || node.type === 'artboard') {
-        updates['props.width'] = Math.max(1, finalW);
-        updates['props.height'] = Math.max(1, finalH);
+        updates['props.width'] = node.type === 'artboard' ? Math.round(Math.max(1, finalW)) : Math.max(1, finalW);
+        updates['props.height'] = node.type === 'artboard' ? Math.round(Math.max(1, finalH)) : Math.max(1, finalH);
 
         if (node.type !== 'artboard') {
           updates['transform.scaleX'] = initialTransform.scaleX * sgnX;
@@ -2675,7 +2931,7 @@ export default function CanvasView() {
       const node = nodes.get(interaction.nodeId);
       if (!node || node.type !== 'path') return;
 
-      const worldMatrix = interaction.initialWorldMatrix || getWorldMatrix(interaction.nodeId, nodes, currentTime);
+      const worldMatrix = interaction.initialWorldMatrix || getWorldMatrix(interaction.nodeId, nodes, currentTime, activeArtboardId || undefined);
       const combinedMatrix = viewTransform.multiply(worldMatrix);
       const inv = combinedMatrix.inverse();
       const currentLocalMouse = new DOMPoint(screenX, screenY).matrixTransform(inv);
@@ -2708,7 +2964,37 @@ export default function CanvasView() {
       }
 
       points[vertexIndex] = p;
-      setNodeProperty(interaction.nodeId, 'props.points', points);
+
+      // Compensate transform.x/y for any anchor drift caused by dynamic anchorAlignX/Y.
+      // When anchorAlignX/Y is set (e.g. 0.5 = center), the anchor is always recomputed as
+      // the centre of the bounding box.  Changing a vertex changes the bounding box → anchor
+      // shifts → worldMatrix shifts → the whole shape appears to move.  We cancel that by
+      // nudging transform.x/y by the same amount the anchor moved (in parent-local space).
+      const { anchorAlignX, anchorAlignY } = node.transform;
+      if ((anchorAlignX !== undefined || anchorAlignY !== undefined) && interaction.initialOffsetX !== undefined) {
+        const oldLB = getPathLocalBounds(initialProps.points as any[]);
+        const newLB = getPathLocalBounds(points);
+        const dAX = anchorAlignX !== undefined
+          ? (newLB.x + newLB.width  * anchorAlignX) - (oldLB.x + oldLB.width  * anchorAlignX)
+          : 0;
+        const dAY = anchorAlignY !== undefined
+          ? (newLB.y + newLB.height * anchorAlignY) - (oldLB.y + oldLB.height * anchorAlignY)
+          : 0;
+        if (dAX !== 0 || dAY !== 0) {
+          // Transform the anchor delta from path-local → parent-local using the node's own R×S.
+          // createTransformMatrix gives T(x,y)·R·S; the a,b,c,d (linear) part equals R×S.
+          const rsM = createTransformMatrix(node.transform, nodes, node, currentTime, false);
+          const compX = rsM.a * dAX + rsM.c * dAY;
+          const compY = rsM.b * dAX + rsM.d * dAY;
+          setNodeProperties(interaction.nodeId, {
+            'props.points': points,
+            'transform.x': (interaction.initialOffsetX) + compX,
+            'transform.y': (interaction.initialOffsetY!) + compY,
+          }, { ignoreAnchorFollowing: true, ignoreAnimation: true });
+          return;
+        }
+      }
+      setNodeProperty(interaction.nodeId, 'props.points', points, { ignoreAnchorFollowing: true });
     } else if (interaction.type === 'edit_gradient' && interaction.nodeId) {
       if (!interaction.hasRecordedHistory) {
         useCreatorStore.getState().pushToHistory('Edit Gradient');
@@ -2808,18 +3094,22 @@ export default function CanvasView() {
           const tx = canvasSize.width / 2 + viewport.zoom * viewport.pan.x;
           const ty = canvasSize.height / 2 + viewport.zoom * viewport.pan.y;
 
+          // Nodes with duplicate names can't be looked up reliably by ThorVG — collect them
+          // for matrix-based fallback after the ThorVG pass.
+          const matrixFallbackIds: string[] = [];
+
           artboard!.children.forEach(nodeId => {
             const node = nodes.get(nodeId);
             if (!node || !node.name || !node.visible || node.type === 'artboard') return;
             if (!isNodeSelectable(nodeId, nodes)) return;
 
             // Skip duplicate-named layers — ThorVG looks up by name, so duplicates
-            // would return the wrong layer's bbox. Let them fall through to matrix-based hit test.
+            // would return the wrong layer's bbox. Fall through to matrix-based hit test below.
             const nameCount = artboard!.children.filter(sibId => {
               const sib = nodes.get(sibId);
               return sib && sib.name === node.name;
             }).length;
-            if (nameCount > 1) return;
+            if (nameCount > 1) { matrixFallbackIds.push(nodeId); return; }
 
             const bbox = dotlottieRef.current!.getLayerBoundingBox(node.name);
             // getLayerBoundingBox returns [x0,y0, x1,y1, x2,y2, x3,y3] — 4 OBB corners
@@ -2852,6 +3142,24 @@ export default function CanvasView() {
               newlySelected.push(nodeId);
             }
           });
+
+          // Matrix-based fallback for nodes skipped above due to duplicate names.
+          if (viewTransform && matrixFallbackIds.length > 0) {
+            matrixFallbackIds.forEach(nodeId => {
+              const node = nodes.get(nodeId);
+              if (!node) return;
+              const combined = viewTransform.multiply(getWorldMatrix(nodeId, nodes, currentTime, activeArtboardId || undefined));
+              const screenBounds = getBoundingBox(node, combined, nodes, currentTime);
+              if (
+                screenBounds.x <= x2 &&
+                screenBounds.x + screenBounds.width >= x1 &&
+                screenBounds.y <= y2 &&
+                screenBounds.y + screenBounds.height >= y1
+              ) {
+                newlySelected.push(nodeId);
+              }
+            });
+          }
         } else {
           // Fallback: Canvas2D matrix-based marquee (used when ThorVG is not active or
           // lottieNeedsReload=true, and for user-drawn nodes with no animation source).
@@ -3032,6 +3340,20 @@ export default function CanvasView() {
       hitNodeId = findNodeAtPoint(artboardLocal.x, artboardLocal.y, nodes, artboard?.id || null, e.ctrlKey || e.metaKey, currentTime, artboard?.id || undefined);
     }
 
+    // When inside a group, resolve hit to the direct child (deep=false for level-by-level drill-down)
+    if (activeGroupId) {
+      const childHit = findNodeAtPoint(artboardLocal.x, artboardLocal.y, nodes, activeGroupId, false, currentTime, artboard?.id || undefined);
+      if (childHit) {
+        hitNodeId = childHit;
+      } else {
+        // Double-clicked outside the entered group → exit one level
+        popActiveGroup();
+        setSelection([activeGroupId]);
+        setInteraction({ type: 'none', startPos: { x: 0, y: 0 } });
+        return;
+      }
+    }
+
     if (hitNodeId) {
       const node = nodes.get(hitNodeId);
       if (node) {
@@ -3041,6 +3363,11 @@ export default function CanvasView() {
           // Switch to nested artboard
           setSelection([]); // Clear selection when entering
           setActiveArtboard(node.refId);
+        } else if (node.type === 'group') {
+          // Enter the group: push onto the stack and select the direct child at this position
+          pushActiveGroup(hitNodeId);
+          const childHit = findNodeAtPoint(artboardLocal.x, artboardLocal.y, nodes, hitNodeId, false, currentTime, artboard?.id || undefined);
+          if (childHit) setSelection([childHit]);
         } else if (node.type === 'rect' || node.type === 'ellipse') {
           // Convert to path for editing
           const points = convertToPath(node);
@@ -3065,6 +3392,11 @@ export default function CanvasView() {
         setInteraction({ type: 'none', startPos: { x: 0, y: 0 } });
       }
     } else {
+      if (activeGroupId) {
+        // Double-clicked empty space → exit one level
+        popActiveGroup();
+        setSelection([activeGroupId]);
+      }
       setEditingNode(null);
       setTextEditState(null);
     }
@@ -3102,6 +3434,7 @@ export default function CanvasView() {
         return (
           <DotLottiePlayback
             visible={true}
+            transparent={!!editingNodeId}
             artboardWidth={aw}
             artboardHeight={ah}
             viewportZoom={viewport.zoom}
@@ -3134,6 +3467,9 @@ export default function CanvasView() {
           interaction={interaction}
           hoveredNodeId={hoveredNodeId}
           textEditingId={textEditState?.nodeId ?? null}
+          selectedVertexIndex={selectedVertexIndex}
+          segmentHover={segmentHover ? { screenX: segmentHover.screenX, screenY: segmentHover.screenY } : null}
+          activeGroupId={activeGroupId}
         />
       )}
 

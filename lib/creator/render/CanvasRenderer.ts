@@ -1549,6 +1549,16 @@ export class CanvasRenderer {
       this.ctx.restore();
     }
 
+    // Clip all child rendering (shapes, groups, text) to the artboard bounds.
+    // This mirrors ThorVG's canvas-boundary clipping so Canvas2D and ThorVG agree:
+    // shapes outside the artboard are never visible regardless of which renderer is active.
+    // The clip is active until the parent renderNode() calls ctx.restore() after
+    // renderChildrenBatched() returns — selection handles (drawn by React overlays, not
+    // Canvas2D) are unaffected.
+    this.ctx.beginPath();
+    this.ctx.rect(0, 0, width, height);
+    this.ctx.clip();
+
     // Grid
     if (showGrid) {
       this.ctx.save();

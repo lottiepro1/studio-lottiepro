@@ -20,6 +20,9 @@ interface SelectionOverlayProps {
   };
   hoveredNodeId: string | null;
   textEditingId?: string | null;
+  selectedVertexIndex?: number | null;
+  segmentHover?: { screenX: number; screenY: number } | null;
+  activeGroupId?: string | null;
 }
 
 /**
@@ -40,6 +43,12 @@ interface SelectionOverlayProps {
 // Minimum screen-pixel bounding-box dimension before resize/rotate handles are hidden.
 // Matches the same constant in CanvasView so hit-test and rendering stay in sync.
 const MIN_HANDLE_SCREEN_PX = 20;
+
+// Must match RESIZE_CURSORS order in CanvasView: tl, top-mid, tr, right-mid, br, bot-mid, bl, left-mid
+const RESIZE_HANDLE_CURSORS = [
+  'nw-resize', 'n-resize', 'ne-resize', 'e-resize',
+  'se-resize', 's-resize', 'sw-resize', 'w-resize',
+];
 
 function thorVGBoxToCSS(
   bbox: number[],
@@ -71,7 +80,7 @@ function thorVGBoxToCSS(
   return { tl, tr, br, bl, worldW: widthCss / zoom, worldH: heightCss / zoom };
 }
 
-export default function SelectionOverlay({ viewTransform, interaction, hoveredNodeId, textEditingId }: SelectionOverlayProps) {
+export default function SelectionOverlay({ viewTransform, interaction, hoveredNodeId, textEditingId, selectedVertexIndex, segmentHover, activeGroupId }: SelectionOverlayProps) {
   const nodes = useCreatorStore((state) => state.nodes);
   const selectedIds = useCreatorStore((state) => state.selectedIds);
   const editingNodeId = useCreatorStore((state) => state.editingNodeId);
@@ -110,7 +119,9 @@ export default function SelectionOverlay({ viewTransform, interaction, hoveredNo
   // the wrong shape. We must verify the name is unique among sibling layers before querying.
   const isThorVGQueryable = (nodeId: string) => {
     const node = nodes.get(nodeId);
-    if (!node || !thorVGReady || !node.name || node.type === 'artboard') return false;
+    // Precomp: ThorVG returns visual content bounds (inner shapes), not the precomp frame.
+    // Always use the matrix fallback which reads refArtboard.width/height instead.
+    if (!node || !thorVGReady || !node.name || node.type === 'artboard' || node.type === 'precomp') return false;
     if (node.parentId !== artboard?.id) return false;
     // Check name uniqueness among sibling layers — ThorVG looks up by name, so duplicates
     // would return the wrong layer's bbox.
@@ -279,21 +290,77 @@ export default function SelectionOverlay({ viewTransform, interaction, hoveredNo
     // Path editing mode: render bezier handles only, no bounding box
     if (editingNodeId === nodeId && node.type === 'path') {
       const points = (AnimationUtils.getPropertyValue(node, 'props.points', currentTime) || []) as any[];
+
+      // Compute screen-space center of all vertices to derive directional resize cursors
+      const screenPts = points.map((p: any) => localToScreen(p.x, p.y, combinedMatrix));
+      const cxScreen = screenPts.reduce((s: number, p: {x:number}) => s + p.x, 0) / (screenPts.length || 1);
+      const cyScreen = screenPts.reduce((s: number, p: {y:number}) => s + p.y, 0) / (screenPts.length || 1);
+      const getVertexCursor = (sx: number, sy: number) => {
+        const angleDeg = Math.atan2(sy - cyScreen, sx - cxScreen) * 180 / Math.PI;
+        const sector = Math.floor(((angleDeg + 22.5 + 360) % 360) / 45) % 8;
+        return RESIZE_HANDLE_CURSORS[(sector + 3) % 8];
+      };
+
+      // Active vertex = the one being dragged OR the persistently selected one
+      const activeVtxIdx = (interaction?.type === 'edit_path' ? interaction.vertexIndex : undefined) ?? selectedVertexIndex;
+
       return (
         <g key={nodeId}>
-          {points.map((p, i) => {
+          {points.map((p: any, i: number) => {
             const screen = localToScreen(p.x, p.y, combinedMatrix);
-            const inH = localToScreen(p.x + p.inX, p.y + p.inY, combinedMatrix);
-            const outH = localToScreen(p.x + p.outX, p.y + p.outY, combinedMatrix);
-            const isVertexHit = interaction?.type === 'edit_path' && interaction.vertexIndex === i;
+            const isActive = i === activeVtxIdx;
+            const vertexCursor = getVertexCursor(screen.x, screen.y);
+
+            // For a sharp-corner selected vertex (zero handles) compute tangent-aligned
+            // default positions so the handle circles appear at a visible offset (AE style).
+            let effInX = p.inX, effInY = p.inY;
+            let effOutX = p.outX, effOutY = p.outY;
+            if (isActive && p.inX === 0 && p.inY === 0 && p.outX === 0 && p.outY === 0) {
+              const n = points.length;
+              const prev = points[(i - 1 + n) % n];
+              const next = points[(i + 1) % n];
+              let tx = next.x - prev.x, ty = next.y - prev.y;
+              const tlen = Math.sqrt(tx * tx + ty * ty);
+              if (tlen > 0.001) {
+                tx /= tlen; ty /= tlen;
+                const d1 = Math.sqrt((p.x - prev.x) ** 2 + (p.y - prev.y) ** 2);
+                const d2 = Math.sqrt((next.x - p.x) ** 2 + (next.y - p.y) ** 2);
+                const hLen = Math.min(d1, d2) / 3;
+                effInX = -tx * hLen; effInY = -ty * hLen;
+                effOutX =  tx * hLen; effOutY =  ty * hLen;
+              }
+            }
+
+            const inH  = localToScreen(p.x + effInX,  p.y + effInY,  combinedMatrix);
+            const outH = localToScreen(p.x + effOutX, p.y + effOutY, combinedMatrix);
+
+            // Lines: only when the handle is non-zero (actual curve exists)
+            const hasInCurve  = p.inX  !== 0 || p.inY  !== 0;
+            const hasOutCurve = p.outX !== 0 || p.outY !== 0;
+            // Circles: show for any vertex with existing handles OR for the active vertex
+            const showInCircle  = hasInCurve  || isActive;
+            const showOutCircle = hasOutCurve || isActive;
 
             return (
               <g key={i}>
-                {(p.inX !== 0 || p.inY !== 0) && <line x1={screen.x} y1={screen.y} x2={inH.x} y2={inH.y} stroke="#0A84FF" strokeWidth="1" opacity="0.5" />}
-                {(p.outX !== 0 || p.outY !== 0) && <line x1={screen.x} y1={screen.y} x2={outH.x} y2={outH.y} stroke="#0A84FF" strokeWidth="1" opacity="0.5" />}
-                {(p.inX !== 0 || p.inY !== 0) && <circle cx={inH.x} cy={inH.y} r="3" fill="white" stroke="#0A84FF" strokeWidth="1" className="pointer-events-auto cursor-pointer" />}
-                {(p.outX !== 0 || p.outY !== 0) && <circle cx={outH.x} cy={outH.y} r="3" fill="white" stroke="#0A84FF" strokeWidth="1" className="pointer-events-auto cursor-pointer" />}
-                <rect x={screen.x - 4} y={screen.y - 4} width="8" height="8" fill={isVertexHit ? "#0A84FF" : "white"} stroke="#0A84FF" strokeWidth="2" className="pointer-events-auto cursor-pointer hover:fill-[#0A84FF] transition-colors" />
+                {(hasInCurve  || isActive) && <line x1={screen.x} y1={screen.y} x2={inH.x}  y2={inH.y}  stroke="#0A84FF" strokeWidth="1" opacity="0.5" />}
+                {(hasOutCurve || isActive) && <line x1={screen.x} y1={screen.y} x2={outH.x} y2={outH.y} stroke="#0A84FF" strokeWidth="1" opacity="0.5" />}
+                {showInCircle  && (
+                  <circle cx={inH.x}  cy={inH.y}  r="4" fill="white" stroke="#0A84FF" strokeWidth="1.5"
+                    className="pointer-events-auto" style={{ cursor: 'crosshair' }} />
+                )}
+                {showOutCircle && (
+                  <circle cx={outH.x} cy={outH.y} r="4" fill="white" stroke="#0A84FF" strokeWidth="1.5"
+                    className="pointer-events-auto" style={{ cursor: 'crosshair' }} />
+                )}
+                {/* Vertex square rendered last so it stays clickable on top */}
+                <rect
+                  x={screen.x - 4} y={screen.y - 4} width="8" height="8"
+                  fill={isActive ? "#0A84FF" : "white"}
+                  stroke="#0A84FF" strokeWidth="2"
+                  className="pointer-events-auto hover:fill-[#0A84FF] transition-colors"
+                  style={{ cursor: vertexCursor }}
+                />
               </g>
             );
           })}
@@ -389,29 +456,49 @@ export default function SelectionOverlay({ viewTransform, interaction, hoveredNo
     if (!usedThorVGBbox) {
       // Fallback: compute bounding box from our scene graph (matrix math)
       let width = 0, height = 0, offsetX = 0, offsetY = 0;
+      // fillW/fillH track the shape's intrinsic size (excluding stroke) for the size tooltip.
+      let fillW = 0, fillH = 0;
       if (node.type === 'rect' || node.type === 'artboard' || node.type === 'image') {
         width = AnimationUtils.getPropertyValue(node, 'props.width', currentTime) || 0;
         height = AnimationUtils.getPropertyValue(node, 'props.height', currentTime) || 0;
+        fillW = width; fillH = height;
+        // Expand fallback bounds to include outside stroke (mirrors ThorVG bbox which includes stroke)
+        if (node.type !== 'artboard' && (node.style.strokeAlign ?? 'outside') === 'outside' && (node.style.strokeWidth || 0) > 0) {
+          const S = node.style.strokeWidth || 0;
+          offsetX = -S / 2; offsetY = -S / 2;
+          width += S; height += S;
+        }
       } else if (node.type === 'ellipse') {
         width = (AnimationUtils.getPropertyValue(node, 'props.radiusX', currentTime) || 0) * 2;
         height = (AnimationUtils.getPropertyValue(node, 'props.radiusY', currentTime) || 0) * 2;
+        fillW = width; fillH = height;
+        // Expand fallback bounds to include outside stroke
+        if ((node.style.strokeAlign ?? 'outside') === 'outside' && (node.style.strokeWidth || 0) > 0) {
+          const S = node.style.strokeWidth || 0;
+          offsetX = -S / 2; offsetY = -S / 2;
+          width += S; height += S;
+        }
       } else if (node.type === 'path') {
         const points = AnimationUtils.getPropertyValue(node, 'props.points', currentTime);
         const lb = getPathLocalBounds(points || []);
         width = lb.width; height = lb.height; offsetX = lb.x; offsetY = lb.y;
+        fillW = width; fillH = height;
       } else if (node.type === 'group') {
         const lb = getGroupLocalBounds(nodeId, nodes, currentTime);
         width = lb.width; height = lb.height; offsetX = lb.x; offsetY = lb.y;
+        fillW = width; fillH = height;
       } else if (node.type === 'precomp' && node.refId) {
         const refArtboard = nodes.get(node.refId);
         if (refArtboard) {
           width = refArtboard.props.width || 0;
           height = refArtboard.props.height || 0;
+          fillW = width; fillH = height;
         }
       } else if (node.type === 'text') {
         // Use TextMeasurer for pixel-accurate bounds (includes letter-spacing, word-wrap, alignment offset)
         const lb = getTextLocalBounds(node);
         width = lb.width; height = lb.height; offsetX = lb.x; offsetY = lb.y;
+        fillW = width; fillH = height;
       }
 
       tl = localToScreen(offsetX, offsetY, combinedMatrix);
@@ -419,11 +506,11 @@ export default function SelectionOverlay({ viewTransform, interaction, hoveredNo
       br = localToScreen(offsetX + width, offsetY + height, combinedMatrix);
       bl = localToScreen(offsetX, offsetY + height, combinedMatrix);
 
-      // Size display: local dims × animated scale
+      // Size display: fill dims (not stroke-expanded) × animated scale
       const scaleX = Math.abs(AnimationUtils.getPropertyValue(node, 'transform.scaleX', currentTime) || 1);
       const scaleY = Math.abs(AnimationUtils.getPropertyValue(node, 'transform.scaleY', currentTime) || 1);
-      displayW = width * scaleX;
-      displayH = height * scaleY;
+      displayW = fillW * scaleX;
+      displayH = fillH * scaleY;
     }
 
     // Guard against NaN from degenerate transforms or missing bounds
@@ -494,7 +581,7 @@ export default function SelectionOverlay({ viewTransform, interaction, hoveredNo
         {/* Only render resize/rotate handles when the shape is large enough on screen */}
         {showHandles && node.type === 'polystar' && renderPolystarHandles()}
         {showHandles && node.type !== 'polystar' && handles.map((h, i) => (
-          <rect key={i} x={h.x - 4} y={h.y - 4} width="8" height="8" fill="white" stroke="#0A84FF" strokeWidth="2" className="pointer-events-auto cursor-pointer" />
+          <rect key={i} x={h.x - 4} y={h.y - 4} width="8" height="8" fill="white" stroke="#0A84FF" strokeWidth="2" className="pointer-events-auto" style={{ cursor: RESIZE_HANDLE_CURSORS[i] }} />
         ))}
 
         {!isArtboard && (
@@ -547,7 +634,7 @@ export default function SelectionOverlay({ viewTransform, interaction, hoveredNo
       <g>
         <rect x={tl.x} y={tl.y} width={width} height={height} fill="none" stroke="#0A84FF" strokeWidth="2" />
         {showHandles && handles.map((h, i) => (
-          <rect key={i} x={h.x - 4} y={h.y - 4} width="8" height="8" fill="white" stroke="#0A84FF" strokeWidth="2" className="pointer-events-auto cursor-pointer" />
+          <rect key={i} x={h.x - 4} y={h.y - 4} width="8" height="8" fill="white" stroke="#0A84FF" strokeWidth="2" className="pointer-events-auto" style={{ cursor: RESIZE_HANDLE_CURSORS[i] }} />
         ))}
         <g transform={`translate(${tl.x + width / 2}, ${br.y + 16})`}>
           <rect x="-35" y="-10" width="70" height="20" rx="4" fill="#0A84FF" />
@@ -561,6 +648,49 @@ export default function SelectionOverlay({ viewTransform, interaction, hoveredNo
 
   return (
     <svg className="absolute inset-0 pointer-events-none z-[100]" style={{ overflow: 'visible' }}>
+      {/* Group isolation overlay — dims everything outside the entered group */}
+      {activeGroupId && (() => {
+        const groupNode = nodes.get(activeGroupId);
+        if (!groupNode) return null;
+        const worldMatrix = getWorldMatrix(activeGroupId, nodes, currentTime, activeArtboardId || undefined);
+        const combinedMatrix = viewTransform.multiply(worldMatrix);
+        const bb = getGroupLocalBounds(activeGroupId, nodes, currentTime);
+        if (!bb || bb.width === 0 || bb.height === 0) return null;
+        const tl = localToScreen(bb.x,            bb.y,             combinedMatrix);
+        const tr = localToScreen(bb.x + bb.width,  bb.y,             combinedMatrix);
+        const br = localToScreen(bb.x + bb.width,  bb.y + bb.height, combinedMatrix);
+        const bl = localToScreen(bb.x,             bb.y + bb.height, combinedMatrix);
+        const groupPoly = `M ${tl.x} ${tl.y} L ${tr.x} ${tr.y} L ${br.x} ${br.y} L ${bl.x} ${bl.y} Z`;
+        // Even-odd fill: big outer rect + group polygon → the group area is "cut out" and stays bright
+        const outerRect = `M -10000 -10000 L 10000 -10000 L 10000 10000 L -10000 10000 Z`;
+        return (
+          <g>
+            <path fillRule="evenodd" fill="rgba(0,0,0,0.28)" d={`${outerRect} ${groupPoly}`} />
+            <path fill="none" stroke="#0A84FF" strokeWidth="1.5" strokeDasharray="6 3" opacity="0.8" d={groupPoly} />
+            <text
+              x={tl.x + 4} y={tl.y - 5}
+              fill="#0A84FF" fontSize="11" fontFamily="system-ui,sans-serif" opacity="0.9"
+            >
+              {groupNode.name}
+            </text>
+          </g>
+        );
+      })()}
+
+      {/* Segment hover preview — crosshair dot for "add point" */}
+      {segmentHover && (
+        <g>
+          <circle cx={segmentHover.screenX} cy={segmentHover.screenY} r="5"
+            fill="white" stroke="#0A84FF" strokeWidth="2" opacity="0.9" />
+          <line x1={segmentHover.screenX - 8} y1={segmentHover.screenY}
+                x2={segmentHover.screenX + 8} y2={segmentHover.screenY}
+                stroke="#0A84FF" strokeWidth="1.5" />
+          <line x1={segmentHover.screenX} y1={segmentHover.screenY - 8}
+                x2={segmentHover.screenX} y2={segmentHover.screenY + 8}
+                stroke="#0A84FF" strokeWidth="1.5" />
+        </g>
+      )}
+
       {/* Marquee Box */}
       {showMarquee && marqueeBounds && (
         <rect
@@ -670,10 +800,33 @@ export default function SelectionOverlay({ viewTransform, interaction, hoveredNo
         const br = localToScreen(w, h, combinedMatrix);
         const bl = localToScreen(0, h, combinedMatrix);
 
+        const { a, b, c, d, e, f } = combinedMatrix as DOMMatrix;
+        const matrixStr = `matrix(${a} ${b} ${c} ${d} ${e} ${f})`;
+        // Label: horizontally centered on the bottom edge, below in screen Y
+        const labelX = (bl.x + br.x) / 2;
+        const labelY = Math.max(tl.y, tr.y, br.y, bl.y) + 16;
+
         return (
           <g>
-            <path d={`M ${tl.x} ${tl.y} L ${tr.x} ${tr.y} L ${br.x} ${br.y} L ${bl.x} ${bl.y} Z`} fill="rgba(255, 51, 90, 0.05)" stroke="#0A84FF" strokeWidth="2" strokeDasharray="4 4" />
-            <g transform={`translate(${(tl.x + tr.x) / 2}, ${br.y + 12})`}><rect x="-35" y="-10" width="70" height="20" rx="4" fill="#0A84FF" /><text y="4" textAnchor="middle" fill="white" fontSize="10" fontWeight="bold">{Math.round(w)} × {Math.round(h)}</text></g>
+            {previewNode.type === 'ellipse' ? (
+              <ellipse
+                cx={w / 2}
+                cy={h / 2}
+                rx={w / 2}
+                ry={h / 2}
+                transform={matrixStr}
+                fill="rgba(255, 51, 90, 0.05)"
+                stroke="#0A84FF"
+                strokeWidth="2"
+                strokeDasharray="4 4"
+              />
+            ) : (
+              <path d={`M ${tl.x} ${tl.y} L ${tr.x} ${tr.y} L ${br.x} ${br.y} L ${bl.x} ${bl.y} Z`} fill="rgba(255, 51, 90, 0.05)" stroke="#0A84FF" strokeWidth="2" strokeDasharray="4 4" />
+            )}
+            <g transform={`translate(${labelX}, ${labelY})`}>
+              <rect x="-35" y="-10" width="70" height="20" rx="4" fill="#0A84FF" />
+              <text y="4" textAnchor="middle" fill="white" fontSize="10" fontWeight="bold">{Math.round(w)} × {Math.round(h)}</text>
+            </g>
           </g>
         );
       })()}

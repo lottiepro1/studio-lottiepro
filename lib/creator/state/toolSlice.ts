@@ -15,6 +15,8 @@ export interface ToolSlice {
   setCreatorMode: (mode: 'animate' | 'state-flow') => void;
   isDiscoverModalOpen: boolean;
   setDiscoverModalOpen: (isOpen: boolean) => void;
+  activeLayersTab: 'layers' | 'segments';
+  setActiveLayersTab: (tab: 'layers' | 'segments') => void;
 }
 
 // Create the tool slice
@@ -29,4 +31,6 @@ export const createToolSlice: StateCreator<ToolSlice> = (set) => ({
   setCreatorMode: (mode) => set({ creatorMode: mode }),
   isDiscoverModalOpen: false,
   setDiscoverModalOpen: (isOpen) => set({ isDiscoverModalOpen: isOpen }),
+  activeLayersTab: 'layers',
+  setActiveLayersTab: (tab) => set({ activeLayersTab: tab }),
 });

@@ -227,24 +227,36 @@ export const createSceneSlice: StateCreator<CreatorStore, [["zustand/immer", nev
   }),
 
   updateNode: (id, updates) => {
-    // Track whether the node type actually changed so we can decide post-set behavior.
-    // Zustand set() is synchronous, so this closure variable is safe to read afterward.
+    // Track changed categories in closure vars — readable after set() returns.
     let typeChanged = false;
+    let visibilityChanged = false;
     set((draft) => {
       const node = draft.nodes.get(id);
       if (!node) return;
-      // A type change (e.g. rect → path on double-click) changes the Lottie shape structure
-      // (rc item → sh item). patchLottieNode can only patch existing shape items — it cannot
-      // convert rc to sh. Force the slow-path (full LottieExporter re-export) by incrementing
-      // structureChangeCounter so DotLottiePlayback rebuilds lottieModel with the correct type.
+      // Type change: shape structure (rc→sh) can't be patched in-place; force slow-path re-export.
       typeChanged = updates.type !== undefined && updates.type !== node.type;
+      // Visibility change: ThorVG doesn't reliably pick up in-place hd patches; force slow-path
+      // so LottieExporter re-exports with the correct hd flag.
+      visibilityChanged = updates.visible !== undefined && updates.visible !== node.visible;
       Object.assign(node, updates);
       draft.updateCounter++;
-      if (typeChanged) draft.structureChangeCounter++;
+      if (typeChanged || visibilityChanged) {
+        draft.structureChangeCounter++;
+      } else {
+        // Child-of-group nodes are not in lottieNodeMap, so patchLottieNode skips them.
+        // Increment childUpdateCounter to force DotLottiePlayback off the fast path so it
+        // runs a full LottieExporter re-export and ThorVG picks up the change.
+        const isChildOfGroup = !(draft as any).lottieJsonCache &&
+          !(draft as any).lottieNodeMap?.has(id) &&
+          (draft as any).lottieModel !== null &&
+          node.type !== 'artboard';
+        if (isChildOfGroup) (draft as any).childUpdateCounter++;
+      }
     });
-    // Skip patchLottieNode for type changes — the shape structure in lottieModel is now stale
-    // (still rc/el when the node is a path). The slow-path triggered above rebuilds it properly.
-    if (!typeChanged) {
+    // patchLottieNode is only useful for property-only changes on top-level nodes.
+    // Type and visibility changes use structureChangeCounter above (slow-path re-export).
+    // Child-of-group changes use childUpdateCounter above (also slow-path re-export).
+    if (!typeChanged && !visibilityChanged) {
       const state = get();
       if (state.lottieJsonCache || state.lottieNodeMap?.has(id)) state.patchLottieNode(id);
     }
@@ -378,11 +390,14 @@ export const createSceneSlice: StateCreator<CreatorStore, [["zustand/immer", nev
         activeArtboardId: id,
         duration: artboard.props?.duration ?? state.duration,
         fps: artboard.props?.frameRate ?? state.fps,
-        // Also reset current time if it's out of bounds for the new duration
-        currentTime: Math.min(state.currentTime, artboard.props?.duration ?? state.duration)
+        currentTime: Math.min(state.currentTime, artboard.props?.duration ?? state.duration),
+        // Force a full Lottie re-export so ThorVG renders the new artboard as root.
+        // Without this, navigating into/out of a nested artboard keeps showing the old
+        // composition (with parent-composition transforms applied to the nested content).
+        structureChangeCounter: state.structureChangeCounter + 1,
       };
     }
-    return { activeArtboardId: id };
+    return { activeArtboardId: id, structureChangeCounter: state.structureChangeCounter + 1 };
   }),
 
   precompose: (nodeIds, name = 'Nested Scene') => {

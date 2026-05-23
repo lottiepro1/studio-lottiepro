@@ -54,7 +54,7 @@ export function createDefaultStyle(): Style {
         opacity: 1,
         blendMode: 'normal',
         strokeOpacity: 1,
-        strokeAlign: 'center',
+        strokeAlign: 'outside',
         strokeLinecap: 'round',
         strokeLinejoin: 'round',
         trimStart: 0,

@@ -202,6 +202,9 @@ export class AnimationUtils {
         if (Array.isArray(v1) && Array.isArray(v2)) {
             // Check if this is a path points array
             if (v1.length > 0 && typeof v1[0] === 'object' && v1[0] !== null && 'x' in v1[0]) {
+                // If point counts differ, snap to the end keyframe rather than silently
+                // dropping the extra points (which would produce a broken partial shape).
+                if (v1.length !== v2.length) return easedT < 0.5 ? v1 : v2;
                 return v1.map((p1, i) => {
                     const p2 = v2[i];
                     if (!p2) return p1;

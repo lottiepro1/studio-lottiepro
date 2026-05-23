@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useRef, useCallback } from 'react';
+import { useMemo, useRef, useCallback, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useCreatorStore } from '@/lib/creator/state/store';
 import { LayerItem } from './LayerItem';
@@ -18,7 +18,8 @@ const NAME_COLOR    = 'rgba(241,247,254,0.71)';
 const ROW_HEIGHT = 36; // 32px item + 4px gap
 
 export default function LayersPanel() {
-  const [activeTab, setActiveTab] = useState<'layers' | 'segments'>('layers');
+  const activeTab    = useCreatorStore(s => s.activeLayersTab);
+  const setActiveTab = useCreatorStore(s => s.setActiveLayersTab);
 
   // Layers
   const nodes             = useCreatorStore(s => s.nodes);
@@ -94,7 +95,8 @@ export default function LayersPanel() {
       if (startIdx !== -1 && endIdx !== -1) {
         const min   = Math.min(startIdx, endIdx);
         const max   = Math.max(startIdx, endIdx);
-        const range = flatOrderedIds.slice(min, max + 1);
+        // Skip locked layers in range selections
+        const range = flatOrderedIds.slice(min, max + 1).filter(id => !nodes.get(id)?.locked);
         if (isCtrl) setSelection(Array.from(new Set([...selectedIds, ...range])));
         else setSelection(range);
         return;
@@ -106,7 +108,7 @@ export default function LayersPanel() {
     } else {
       setSelection([nodeId]);
     }
-  }, [flatOrderedIds, lastSelectedId, selectedIds, setSelection, addToSelection, removeFromSelection, setActivePanel]);
+  }, [flatOrderedIds, lastSelectedId, selectedIds, nodes, setSelection, addToSelection, removeFromSelection, setActivePanel]);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -136,11 +138,11 @@ export default function LayersPanel() {
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className="flex-1 h-[30px] rounded-[4px] text-[13px] transition-all capitalize"
+            className="flex-1 h-[30px] rounded-[4px] text-[13px] transition-colors capitalize"
             style={
               activeTab === tab
                 ? { background: ACTIVE_TAB_BG, border: `1px solid ${ACTIVE_TAB_BD}`, color: TEXT_ON, fontWeight: 510 }
-                : { color: TEXT_OFF, fontWeight: 400 }
+                : { background: 'transparent', border: '1px solid transparent', color: TEXT_OFF, fontWeight: 400 }
             }
           >
             {tab === 'layers' ? 'Layers' : 'Segments'}
@@ -148,11 +150,18 @@ export default function LayersPanel() {
         ))}
       </div>
 
-      {/* ── Layers tab ── */}
-      {activeTab === 'layers' && (
+      {/* ── Content panels — both always mounted, fade between them ── */}
+      <div className="flex-1 relative min-h-0 overflow-hidden">
+
+        {/* Layers panel */}
         <div
           ref={scrollContainerRef}
-          className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar min-h-0"
+          className="absolute inset-0 overflow-y-auto overflow-x-hidden custom-scrollbar"
+          style={{
+            opacity: activeTab === 'layers' ? 1 : 0,
+            transition: 'opacity 0.18s ease',
+            pointerEvents: activeTab === 'layers' ? 'auto' : 'none',
+          }}
         >
           {previewNode && (
             <div
@@ -200,11 +209,16 @@ export default function LayersPanel() {
             </div>
           )}
         </div>
-      )}
 
-      {/* ── Segments tab ── */}
-      {activeTab === 'segments' && (
-        <div className="flex-1 flex flex-col min-h-0 gap-2">
+        {/* Segments panel */}
+        <div
+          className="absolute inset-0 flex flex-col gap-2"
+          style={{
+            opacity: activeTab === 'segments' ? 1 : 0,
+            transition: 'opacity 0.18s ease',
+            pointerEvents: activeTab === 'segments' ? 'auto' : 'none',
+          }}
+        >
           <div className="flex-1 overflow-y-auto flex flex-col gap-1.5 custom-scrollbar min-h-0">
             {flowBlocks.length === 0 ? (
               <div className="flex-1 flex flex-col items-center justify-center gap-3 opacity-40 py-8 px-4">
@@ -285,7 +299,8 @@ export default function LayersPanel() {
             <Plus size={14} /> Add Segment
           </button>
         </div>
-      )}
+
+      </div>
     </div>
   );
 }

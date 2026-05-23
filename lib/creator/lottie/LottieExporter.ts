@@ -8,9 +8,15 @@ import { AnimationUtils } from '../core/Animation';
 import { measureFontAscent } from '../text/TextMeasurer';
 
 export class LottieExporter {
-    static export(nodes: Map<string, SceneNode>, fps: number, duration: number, flowBlocks: FlowBlock[] = []): LottieAnimation {
-        // 1. Identify Root Artboard (The one with no parent)
-        const rootArtboard = Array.from(nodes.values()).find(n => n.type === 'artboard' && !n.parentId) ||
+    static export(nodes: Map<string, SceneNode>, fps: number, duration: number, flowBlocks: FlowBlock[] = [], activeArtboardId?: string): LottieAnimation {
+        // 1. Identify Root Artboard
+        // When activeArtboardId points to a nested artboard, use it as root so ThorVG renders
+        // that artboard's content in isolation — no parent-composition transforms applied.
+        // This mirrors AE/LottieFiles behaviour: entering a precomp shows only its own layers.
+        const activeArtboard = activeArtboardId ? nodes.get(activeArtboardId) : null;
+        const rootArtboard =
+            (activeArtboard?.type === 'artboard' ? activeArtboard : null) ||
+            Array.from(nodes.values()).find(n => n.type === 'artboard' && !n.parentId) ||
             Array.from(nodes.values()).find(n => n.type === 'artboard');
 
         if (!rootArtboard) throw new Error('No artboard found for export');
@@ -59,8 +65,11 @@ export class LottieExporter {
         // 4. Export Root Layers
         animation.layers = this.exportArtboardLayers(rootArtboard, nodes, safeDurationFrames, imageAssetMap);
 
-        // 5. Export all other artboards as Assets
-        const otherArtboards = Array.from(nodes.values()).filter(n => n.type === 'artboard' && n.id !== rootArtboard.id);
+        // 5. Export artboards that are reachable (referenced by precomp layers) from the root.
+        // Only include transitively-referenced artboards so that, e.g., when a nested artboard
+        // is the root, its parent artboard is NOT included as an asset (it would create a
+        // dangling precomp reference pointing back to the root, confusing ThorVG).
+        const otherArtboards = LottieExporter.collectReachableArtboards(rootArtboard, nodes);
 
         if (otherArtboards.length > 0) {
             const precompAssets = otherArtboards.map(artboard => {
@@ -120,6 +129,32 @@ export class LottieExporter {
      * Helper to export a specific artboard's node hierarchy into a flat list of Lottie Layers.
      * This is used for both the main composition and nested pre-compositions (assets).
      */
+    // Recursively collects all artboards that are actually referenced (directly or transitively)
+    // by precomp layers inside `root`. Avoids including ancestor artboards as assets when
+    // a nested artboard is the export root — that would create dangling refId pointers.
+    private static collectReachableArtboards(root: SceneNode, nodes: Map<string, SceneNode>): SceneNode[] {
+        const seen = new Set<string>();
+        const result: SceneNode[] = [];
+        const visit = (node: SceneNode) => {
+            node.children.forEach(childId => {
+                const child = nodes.get(childId);
+                if (!child) return;
+                if (child.type === 'precomp' && child.refId && !seen.has(child.refId)) {
+                    const refArtboard = nodes.get(child.refId);
+                    if (refArtboard?.type === 'artboard') {
+                        seen.add(child.refId);
+                        result.push(refArtboard);
+                        visit(refArtboard);
+                    }
+                } else if (child.type === 'group') {
+                    visit(child);
+                }
+            });
+        };
+        visit(root);
+        return result;
+    }
+
     private static exportArtboardLayers(artboard: SceneNode, nodes: Map<string, SceneNode>, safeDurationFrames: number, imageAssetMap: Map<string, string>): LottieLayer[] {
         const allProcessedLayers: any[] = [];
         const layerMap = new Map<string, any>();
@@ -128,9 +163,14 @@ export class LottieExporter {
             const node = nodes.get(nodeId);
             if (!node) return;
 
-            // Lottie Layer Eligibility (Top-level nodes or those marked as AE Layers)
-            const isTopLevel = node.parentId === artboard.id;
-            const shouldBeLayer = !!node.props?.isLayer || isTopLevel || node.type === 'precomp' || node.type === 'image' || node.type === 'text';
+            // ThorVG does not reliably honor hd:1. Omit hidden nodes entirely so they
+            // are never present in the JSON and cannot be rendered.
+            if (node.visible === false) return;
+
+            // Lottie Layer Eligibility: only direct artboard children become standalone layers.
+            // A node with isLayer:true that has been moved inside a group must be embedded
+            // as a gr item, not exported as a separate layer with AE parenting.
+            const shouldBeLayer = LottieExporter.shouldBeLayer(node, artboard.id);
 
             if (shouldBeLayer && node.type !== 'artboard') {
                 const layer = LottieExporter.mapNodeToLayerBase(node, safeDurationFrames, nodes, imageAssetMap, LottieExporter.getBakedTransform(node, nodes, artboard.id));
@@ -339,7 +379,8 @@ export class LottieExporter {
                 const hasStrokeAnim = (node.animations?.['style.stroke']?.length ?? 0) > 0 || (node.animations?.['style.strokeWidth']?.length ?? 0) > 0 || (node.animations?.['style.strokeOpacity']?.length ?? 0) > 0;
                 const strokeEdited = hasStrokeAnim ||
                     (!!node.style.stroke && node.style.stroke !== node._originalParsedStroke) ||
-                    ((node.style.strokeWidth ?? 0) > 0 && node.style.strokeWidth !== node._originalParsedStrokeWidth);
+                    ((node.style.strokeWidth ?? 0) > 0 && node.style.strokeWidth !== node._originalParsedStrokeWidth) ||
+                    !!node.style.strokeDash;
                 
                 const hasTrimAnim = (node.animations?.['style.trimStart']?.length ?? 0) > 0 ||
                     (node.animations?.['style.trimEnd']?.length ?? 0) > 0 ||
@@ -789,10 +830,83 @@ export class LottieExporter {
                     r: LottieExporter.mapProperty(LottieExporter.safeNum(node.props.roundness, 0), node.animations?.['props.roundness'])
                 });
             }
+
+            // ── Two-group outside stroke (rect / ellipse only, static dims + static strokeWidth) ──
+            // Instead of fill-on-top + doubled-width (which creates D-shapes for round-cap dashes),
+            // use an expanded path for the stroke so its centerline sits S/2 outside the fill edge.
+            // Result: stroke (and its dashes/caps) is entirely outside the fill boundary.
+            if (isLayerRoot && (node.type === 'rect' || node.type === 'ellipse')) {
+                const sAlign = node.style.strokeAlign ?? 'outside';
+                const S = LottieExporter.safeNum(node.style.strokeWidth, 0);
+                const hasFill = node.style.fillVisible !== false &&
+                    !!(node.style.fill || (node.style.fillType === 'gradient' && node.style.fillGradient));
+                const hasStroke = !!(node.style.stroke) && S > 0;
+                const hasStrokeAnim  = !!(node.animations?.['style.strokeWidth']?.length);
+                const hasSizeAnim    = node.type === 'rect'
+                    ? !!(node.animations?.['props.width']?.length || node.animations?.['props.height']?.length)
+                    : !!(node.animations?.['props.radiusX']?.length || node.animations?.['props.radiusY']?.length);
+                const hasTrimActive  = (node.style.trimStart ?? 0) !== 0 || (node.style.trimEnd ?? 1) !== 1 || (node.style.trimOffset ?? 0) !== 0;
+                const hasTrimAnim    = !!(node.animations?.['style.trimStart']?.length || node.animations?.['style.trimEnd']?.length || node.animations?.['style.trimOffset']?.length);
+                const hasRepeater    = node.style.effects?.some(e => e.type === 'repeater' && e.visible !== false);
+
+                if (sAlign === 'outside' && hasFill && hasStroke && !hasStrokeAnim && !hasSizeAnim && !hasTrimActive && !hasTrimAnim && !hasRepeater) {
+                    // Capture path items already pushed, then clear
+                    const fillPathItems = [...it];
+                    it.length = 0;
+
+                    // Build expanded path for stroke (centerline S/2 outside fill edge)
+                    const zeroTr = { ty: 'tr', p: {a:0,k:[0,0]}, a: {a:0,k:[0,0]}, s: {a:0,k:[100,100]}, r: {a:0,k:0}, o: {a:0,k:100} };
+                    let expandedPathItem: any;
+                    if (node.type === 'rect') {
+                        const w = LottieExporter.safeNum(node.props?.width, 100);
+                        const h = LottieExporter.safeNum(node.props?.height, 100);
+                        const R = LottieExporter.safeNum(node.props?.roundness, 0);
+                        expandedPathItem = {
+                            ty: 'rc', nm: 'Rect',
+                            s: { a: 0, k: [w + S, h + S] },
+                            p: { a: 0, k: [LottieExporter.safeNum(w / 2), LottieExporter.safeNum(h / 2)] }
+                        };
+                        // Round join: corners become circular arcs of radius S/2, so expand r by S/2.
+                        // Miter/bevel join: the stroke corner is handled by the lj property at the
+                        // sharp angle of the expanded rect — keep r = R so the corner vertices are
+                        // sharp (when R=0) and lj actually takes effect. Adding S/2 here would make
+                        // corners smooth bezier curves, which would suppress the lj setting entirely.
+                        const lj = node.style.strokeLinejoin ?? 'round';
+                        const eR = lj === 'round' ? R + S / 2 : R;
+                        if (eR > 0) expandedPathItem.r = { a: 0, k: eR };
+                    } else {
+                        const rx = LottieExporter.safeNum(node.props?.radiusX, 50);
+                        const ry = LottieExporter.safeNum(node.props?.radiusY, 50);
+                        expandedPathItem = {
+                            ty: 'el', nm: 'Ellipse',
+                            s: { a: 0, k: [rx * 2 + S, ry * 2 + S] },
+                            p: { a: 0, k: [LottieExporter.safeNum(rx), LottieExporter.safeNum(ry)] }
+                        };
+                    }
+
+                    // Fill group (lower index = on top in ThorVG)
+                    const fillIt: any[] = [...fillPathItems];
+                    LottieExporter.addStylesToIt(node, nodes, fillIt, true, { onlyFill: true });
+                    fillIt.push(zeroTr);
+                    it.push({ ty: 'gr', nm: node.name + ' Fill', it: fillIt });
+
+                    // Stroke group (higher index = behind fill)
+                    const strokeIt: any[] = [expandedPathItem];
+                    LottieExporter.addStylesToIt(node, nodes, strokeIt, true, { onlyStroke: true, strokeWidth: S });
+                    strokeIt.push(zeroTr);
+                    it.push({ ty: 'gr', nm: node.name + ' Stroke', it: strokeIt });
+
+                    return it; // Layer root returns flat shapes array; transform is in layer.ks
+                }
+            }
         }
 
         // --- GROUP OR LAYER ROOT ---
-        let hasDirectLeafChildren = false;
+        // Tracks whether any shape primitives (rc, el, sh, sr) landed directly in `it`
+        // (not wrapped in a gr sub-group). Only when true should the parent group's own
+        // fill/stroke be emitted at this level — otherwise a stray fl with no sibling
+        // shape would cause ThorVG to render a solid rectangle over the entire layer.
+        let hasUnwrappedShapesInIt = false;
 
         if (hasChildren) {
             const isMergeTarget = node.mergeMode && node.mergeMode !== 'none';
@@ -800,11 +914,10 @@ export class LottieExporter {
                 const child = nodes.get(childId);
                 const isLiftingHidden = child && child.visible === false && isMergeTarget;
 
-                if (child && (child.visible !== false || isLiftingHidden) && !child.props?.isLayer &&
+                if (child && (child.visible !== false || isLiftingHidden) &&
                     (child.type === 'rect' || child.type === 'ellipse' || child.type === 'path' || child.type === 'group')) {
 
                     const isChildLeaf = !(child.children && child.children.length > 0) && (child.type === 'rect' || child.type === 'ellipse' || child.type === 'path');
-                    if (isChildLeaf) hasDirectLeafChildren = true;
 
                     const childShape = LottieExporter.mapNodeToShape(child, nodes);
                     if (childShape) {
@@ -821,8 +934,10 @@ export class LottieExporter {
                             const wrapperTransform = { ...child.transform, x: 0, y: 0, anchorX: 0, anchorY: 0 };
                             leafIt.push({ ty: 'tr', nm: 'Transform', ...LottieExporter.mapTransform(child, nodes, wrapperTransform) });
                             it.push({ ty: 'gr', nm: child.name || 'Path Group', it: leafIt });
+                            // Leaf is wrapped in gr — no raw shape primitive lands in `it`
                         } else if (Array.isArray(childShape)) {
                             it.push(...childShape);
+                            if (isChildLeaf) hasUnwrappedShapesInIt = true;
                         } else {
                             it.push(childShape);
                         }
@@ -842,9 +957,13 @@ export class LottieExporter {
             it.push({ ty: 'mm', nm: 'Merge Paths', mm });
         }
 
-        // Fill and stroke are only emitted at the group level when there are direct leaf children
-        // (to avoid overriding per-child styles) or when this is a childless layer root.
-        const shouldEmitStyles = hasDirectLeafChildren || (!hasChildren && isLayerRoot);
+        // Emit the node's own fill/stroke only when there are unwrapped shape primitives
+        // directly in `it`. If every child was wrapped in its own `gr` (because childHasStyle),
+        // adding a fill here would produce a stray fl with no sibling shape, which ThorVG
+        // renders as a solid-color rectangle covering the entire layer area.
+        // Exception: boolean merge groups always need a fill to color the merged result.
+        const isMergeNode = !!(node.mergeMode && node.mergeMode !== 'none');
+        const shouldEmitStyles = hasUnwrappedShapesInIt || (!hasChildren && isLayerRoot) || isMergeNode;
         if (shouldEmitStyles) {
             LottieExporter.addStylesToIt(node, nodes, it, true); // skipTrim=true — emitted separately below
         }
@@ -895,12 +1014,10 @@ export class LottieExporter {
                     }
                 });
             }
-            // A single leaf shape as layer root: return items flat (no gr wrapper).
-            // This avoids an extra nesting level (Layer → gr-group → rect) on round-trip import.
-            // Groups and multi-child layers still get the gr wrapper below.
-            if (isLeafShape) {
-                return it;
-            }
+            // Layer root: always return items flat — no extra gr wrapper.
+            // Leaf shapes avoid the Layer→gr→rc nesting; group layers avoid the
+            // Layer→outer-gr→inner-gr→rc nesting. The layer's ks carries the transform.
+            return it;
         } else {
             it.push({ ty: 'tr', nm: 'Transform', ...LottieExporter.mapTransform(node, nodes) });
         }
@@ -908,7 +1025,34 @@ export class LottieExporter {
         return { ty: 'gr', nm: node.name || 'Group', it: it };
     }
 
-    private static addStylesToIt(node: SceneNode, nodes: Map<string, SceneNode>, it: any[], skipTrim = false) {
+    private static addStylesToIt(
+        node: SceneNode,
+        nodes: Map<string, SceneNode>,
+        it: any[],
+        skipTrim = false,
+        opt?: { onlyFill?: boolean; onlyStroke?: boolean; strokeWidth?: number }
+    ) {
+        // In Lottie / ThorVG, LOWER-index items in the `it` array render ON TOP (same as the AE
+        // layer stack: index 0 = topmost, index N = bottommost).
+        // For correct stroke-over-fill behavior:
+        //   center / inside  → push stroke first (index 0, on top), then fill (below)
+        //   outside          → double the stroke width, push fill first (index 0, on top);
+        //                      fill occludes the inner half of the doubled stroke, exposing only the outer half.
+        //   outside (two-group path-expansion mode) → stroke uses expanded path at original width;
+        //                      caller handles groups, opt.strokeWidth carries the original width.
+        // 'inside' has no native Lottie representation (would need a clip mask); it is rendered as center.
+        const strokeAlign = node.style.strokeAlign ?? 'outside';
+        const strokeIsOutside = strokeAlign === 'outside';
+        // Use caller-supplied strokeWidth when in two-group mode; otherwise use normal/doubled width.
+        const effectiveStrokeWidth = opt?.strokeWidth !== undefined
+            ? opt.strokeWidth
+            : (strokeIsOutside
+                ? LottieExporter.safeNum(node.style.strokeWidth, 1) * 2
+                : LottieExporter.safeNum(node.style.strokeWidth, 1));
+
+        const fillItems: any[] = [];
+        const strokeItems: any[] = [];
+
         const fillVisible = node.style.fillVisible !== false;
         if (fillVisible) {
             if (node.style.fillType === 'gradient' && node.style.fillGradient) {
@@ -939,7 +1083,7 @@ export class LottieExporter {
                 }
                 if (fill.o.a === 0 && fill.o.k === 100) delete fill.o;
                 if (fill.r === 1) delete fill.r;
-                it.push(fill);
+                fillItems.push(fill);
             } else if (node.style.fill) {
                 const fill: any = {
                     ty: 'fl', nm: 'Fill',
@@ -949,7 +1093,7 @@ export class LottieExporter {
                 };
                 if (fill.o.a === 0 && fill.o.k === 100) delete fill.o;
                 if (fill.r === 1) delete fill.r;
-                it.push(fill);
+                fillItems.push(fill);
             }
         }
 
@@ -968,7 +1112,7 @@ export class LottieExporter {
                 const stroke: any = {
                     ty: 'gs', nm: 'Gradient Stroke',
                     o: LottieExporter.mapProperty(LottieExporter.safeNum(node.style.strokeOpacity, 1) * 100, node.animations?.['style.strokeOpacity']?.map(k => ({ ...k, value: k.value * 100 }))),
-                    w: LottieExporter.mapProperty(LottieExporter.safeNum(node.style.strokeWidth, 1), node.animations?.['style.strokeWidth']),
+                    w: LottieExporter.mapProperty(effectiveStrokeWidth, node.animations?.['style.strokeWidth']),
                     s: LottieExporter.mapProperty([grad.start.x, grad.start.y], anim?.map(k => ({ ...k, value: [k.value.start.x, k.value.start.y] }))),
                     e: LottieExporter.mapProperty([grad.end.x, grad.end.y], anim?.map(k => ({ ...k, value: [k.value.end.x, k.value.end.y] }))),
                     t: grad.type === 'linear' ? 1 : 2,
@@ -982,20 +1126,45 @@ export class LottieExporter {
                     stroke.a = LottieExporter.mapProperty(grad.highlightAngle ?? 0, anim?.map(k => ({ ...k, value: k.value.highlightAngle ?? 0 })));
                 }
                 if (stroke.o.a === 0 && stroke.o.k === 100) delete stroke.o;
-                it.push(stroke);
+                strokeItems.push(stroke);
             } else {
                 const stroke: any = {
                     ty: 'st', nm: 'Stroke',
                     c: LottieExporter.mapProperty(LottieExporter.hexToRgbArray(node.style.stroke), node.animations?.['style.stroke']),
                     o: LottieExporter.mapProperty(LottieExporter.safeNum(node.style.strokeOpacity, 1) * 100, node.animations?.['style.strokeOpacity']?.map(k => ({ ...k, value: k.value * 100 }))),
-                    w: LottieExporter.mapProperty(LottieExporter.safeNum(node.style.strokeWidth, 1), node.animations?.['style.strokeWidth']),
+                    w: LottieExporter.mapProperty(effectiveStrokeWidth, node.animations?.['style.strokeWidth']),
                     lc: node.style.strokeLinecap === 'butt' ? 1 : (node.style.strokeLinecap === 'square' ? 3 : 2),
                     lj: node.style.strokeLinejoin === 'miter' ? 1 : (node.style.strokeLinejoin === 'bevel' ? 3 : 2),
                     ml: 4
                 };
+                if (node.style.strokeDash) {
+                    const dashVals = (node.style.strokeDash as string).split(/[\s,]+/).map(Number).filter(n => !isNaN(n) && n >= 0);
+                    if (dashVals.length > 0) {
+                        const d: any[] = [];
+                        for (let i = 0; i < dashVals.length; i += 2) {
+                            d.push({ n: 'd', nm: 'Dash', v: { a: 0, k: dashVals[i] } });
+                            if (i + 1 < dashVals.length) d.push({ n: 'g', nm: 'Gap', v: { a: 0, k: dashVals[i + 1] } });
+                        }
+                        stroke.d = d;
+                    }
+                }
                 if (stroke.o.a === 0 && stroke.o.k === 100) delete stroke.o;
-                it.push(stroke);
+                strokeItems.push(stroke);
             }
+        }
+
+        // Lower-index = on top. Push in z-order: top item first.
+        // outside → fill first (index 0, on top to occlude inner half), stroke second (behind)
+        // center/inside → stroke first (index 0, on top), fill second (behind)
+        // When opt.onlyFill / opt.onlyStroke are set, only emit that subset (used for two-group outside stroke).
+        const emitFill   = !opt?.onlyStroke;
+        const emitStroke = !opt?.onlyFill;
+        if (strokeIsOutside) {
+            if (emitFill)   fillItems.forEach(f => it.push(f));
+            if (emitStroke) strokeItems.forEach(s => it.push(s));
+        } else {
+            if (emitStroke) strokeItems.forEach(s => it.push(s));
+            if (emitFill)   fillItems.forEach(f => it.push(f));
         }
 
         const hasTrimAnim = (node.animations?.['style.trimStart']?.length ?? 0) > 0 ||
@@ -1190,6 +1359,23 @@ export class LottieExporter {
                         Math.round(LottieExporter.safeNum(nodeToApply.style.strokeOpacity ?? 1) * 100),
                         nodeToApply.animations?.['style.strokeOpacity']?.map(k => ({ ...k, value: k.value * 100 }))
                     );
+                    modified = true;
+                }
+
+                // Patch dash array for imported layers
+                if (nodeToApply.style.strokeDash) {
+                    const dashVals = (nodeToApply.style.strokeDash as string).split(/[\s,]+/).map(Number).filter(n => !isNaN(n) && n >= 0);
+                    if (dashVals.length > 0) {
+                        const d: any[] = [];
+                        for (let i = 0; i < dashVals.length; i += 2) {
+                            d.push({ n: 'd', nm: 'Dash', v: { a: 0, k: dashVals[i] } });
+                            if (i + 1 < dashVals.length) d.push({ n: 'g', nm: 'Gap', v: { a: 0, k: dashVals[i + 1] } });
+                        }
+                        result.d = d;
+                        modified = true;
+                    }
+                } else if ('d' in result) {
+                    delete result.d;
                     modified = true;
                 }
 
@@ -1577,8 +1763,12 @@ export class LottieExporter {
     }
 
     private static shouldBeLayer(node: SceneNode, artboardId: string): boolean {
+        // A node is a standalone Lottie layer only when it is a direct child of the artboard.
+        // isLayer:true is intentionally excluded here: a shape moved inside a group by the user
+        // should be embedded as a gr item regardless of any isLayer flag set during a prior import.
+        // Precomp/image/text are always layers because they have no gr representation in Lottie.
         const isTopLevel = node.parentId === artboardId;
-        return !!node.props?.isLayer || isTopLevel || node.type === 'precomp' || node.type === 'image' || node.type === 'text';
+        return isTopLevel || node.type === 'precomp' || node.type === 'image' || node.type === 'text';
     }
 
     private static findNearestLayerParentId(node: SceneNode, nodes: Map<string, SceneNode>, artboardId: string): string | undefined {

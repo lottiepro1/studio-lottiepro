@@ -83,8 +83,8 @@ export const useCreatorStore = create<CreatorStore>()(immer((set, get, api) => (
     const parent = parentId ? nodes.get(parentId) : null;
 
     if (parent) {
-      // Sort nodeIds to preserve relative z-order
-      nodeIds.sort((a, b) => parent.children.indexOf(a) - parent.children.indexOf(b));
+      // Sort a copy to preserve relative z-order (nodeIds may be a frozen Zustand array)
+      nodeIds = [...nodeIds].sort((a, b) => parent.children.indexOf(a) - parent.children.indexOf(b));
     }
 
     // 3. Create Group Node

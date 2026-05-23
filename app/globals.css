@@ -97,7 +97,29 @@ body {
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
 /* ─── Focus ───────────────────────────────────────────────── */
+/* Suppress all browser focus decoration on mouse clicks; keyboard nav keeps the accent ring */
+:focus:not(:focus-visible) {
+  outline: none;
+  box-shadow: none;
+}
+
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* Prevent transition-all from animating focus ring appearance/disappearance on buttons */
+button, [role="button"] {
+  outline: none;
+}
+
+/* ─── Layer lock blink ────────────────────────────────────────── */
+/* Flashes red 3× when the user tries to interact with a locked layer */
+@keyframes layer-locked-blink {
+  0%   { background: rgba(221,234,248,0.08); }
+  50%  { background: rgba(255,69,58,0.32); }
+  100% { background: rgba(221,234,248,0.08); }
+}
+.layer-locked-blink {
+  animation: layer-locked-blink 0.2s ease-in-out 3;
 }

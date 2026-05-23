@@ -70,6 +70,12 @@ export interface AnimationSlice {
     // full load, using lottieModel directly instead (surgical patches kept it current).
     structureChangeCounter: number;
 
+    // Incremented when a child-of-group node's properties change.
+    // patchLottieNode can only patch top-level lottieNodeMap entries; child-of-group edits
+    // are invisible to it and leave lottieModel stale. This counter signals DotLottiePlayback
+    // to take the slow path (full LottieExporter re-export) instead of the fast path.
+    childUpdateCounter: number;
+
     setCurrentTime: (time: number) => void;
     togglePlaying: () => void;
     toggleLooping: () => void;
@@ -96,8 +102,8 @@ export interface AnimationSlice {
     updateKeyframe: (nodeId: string, propertyPath: string, keyframeId: string, updates: Partial<Keyframe>, options?: { recordHistory?: boolean }) => void;
     selectKeyframes: (ids: string[], multi?: boolean) => void;
     deleteSelectedKeyframes: () => void;
-    setNodeProperty: (nodeId: string, propertyPath: string, value: any, options?: { ignoreLink?: boolean, recordHistory?: boolean }) => void;
-    setNodeProperties: (nodeId: string, updates: Record<string, any>, options?: { ignoreLink?: boolean, recordHistory?: boolean, ignoreAnimation?: boolean }) => void;
+    setNodeProperty: (nodeId: string, propertyPath: string, value: any, options?: { ignoreLink?: boolean, recordHistory?: boolean, ignoreAnchorFollowing?: boolean }) => void;
+    setNodeProperties: (nodeId: string, updates: Record<string, any>, options?: { ignoreLink?: boolean, recordHistory?: boolean, ignoreAnimation?: boolean, ignoreAnchorFollowing?: boolean }) => void;
     ensureExpansion: (nodeId: string, propertyPath: string) => void;
     showAnimatedProperties: (nodeId: string) => void;
     shiftLayers: (nodeIds: string[], deltaFrames: number) => void;
@@ -142,6 +148,7 @@ export const createAnimationSlice: StateCreator<CreatorStore, [["zustand/immer",
     lottieModel: null,
     lottieNodeMap: null,
     structureChangeCounter: 0,
+    childUpdateCounter: 0,
 
     setRawAnimationSource: (source) => {
         if (!source) {
@@ -362,9 +369,11 @@ export const createAnimationSlice: StateCreator<CreatorStore, [["zustand/immer",
             // Structural changes (solid↔gradient switch, stroke added/removed) fall back to the
             // full 25ms re-export; only value updates on existing static items are patched here.
             if (Array.isArray((lottieLayer as any).shapes)) {
-                const hasFillAnims   = (anim['style.fill']?.length ?? 0) > 0;
-                const hasStrokeAnims = (anim['style.stroke']?.length ?? 0) > 0 ||
-                                       (anim['style.strokeWidth']?.length ?? 0) > 0;
+                const hasFillAnims      = (anim['style.fill']?.length       ?? 0) > 0;
+                const hasFillOpacAnims  = (anim['style.fillOpacity']?.length ?? 0) > 0;
+                const hasStrokeAnims    = (anim['style.stroke']?.length      ?? 0) > 0 ||
+                                          (anim['style.strokeWidth']?.length  ?? 0) > 0;
+                const hasStrokeOpacAnims = (anim['style.strokeOpacity']?.length ?? 0) > 0;
 
                 const hexToRgb = (hex: string): [number, number, number] => {
                     const h = hex.replace('#', '');
@@ -376,27 +385,54 @@ export const createAnimationSlice: StateCreator<CreatorStore, [["zustand/immer",
                 };
                 const walkShapes = (items: any[]) => {
                     for (const item of items) {
-                        if (item.ty === 'gr' && Array.isArray(item.it)) {
-                            walkShapes(item.it);
-                        } else if (!hasFillAnims && item.ty === 'fl' && item.c?.a === 0) {
-                            if (node.style.fill) {
+                        // Do NOT recurse into gr sub-groups. Those sub-groups belong to child nodes
+                        // (each child is wrapped in its own gr with its own fl/st). Descending here
+                        // would overwrite children's fill colors with the parent group's style.fill.
+                        if (item.ty === 'fl' && item.c?.a === 0) {
+                            if (!hasFillAnims && node.style.fill) {
                                 const [r, g, b] = hexToRgb(node.style.fill);
                                 // Preserve array length: some tools store [r,g,b], others [r,g,b,a]
                                 item.c.k = item.c.k.length >= 4
                                     ? [r, g, b, item.c.k[3]]
                                     : [r, g, b];
                             }
-                            if (item.o) item.o = { a: 0, k: safeNum(node.style.fillOpacity, 1) * 100 };
+                            // Always write item.o — LottieExporter deletes it when opacity===100 to
+                            // keep JSON lean, so `if (item.o)` would never fire when going from 100→other.
+                            if (!hasFillOpacAnims) item.o = { a: 0, k: safeNum(node.style.fillOpacity, 1) * 100 };
                             item.hd = node.style.fillVisible === false ? 1 : 0;
-                        } else if (!hasStrokeAnims && item.ty === 'st' && item.c?.a === 0) {
-                            if (node.style.stroke) {
-                                const [r, g, b] = hexToRgb(node.style.stroke);
-                                item.c.k = item.c.k.length >= 4
-                                    ? [r, g, b, item.c.k[3]]
-                                    : [r, g, b];
+                        } else if (item.ty === 'st' && item.c?.a === 0) {
+                            if (!hasStrokeAnims) {
+                                if (node.style.stroke) {
+                                    const [r, g, b] = hexToRgb(node.style.stroke);
+                                    item.c.k = item.c.k.length >= 4
+                                        ? [r, g, b, item.c.k[3]]
+                                        : [r, g, b];
+                                }
+                                // For outside alignment the Lottie JSON stores 2× width (fill occludes inner half).
+                                const strokeIsOutside = (node.style.strokeAlign ?? 'outside') === 'outside';
+                                item.w = { a: 0, k: safeNum(node.style.strokeWidth, 1) * (strokeIsOutside ? 2 : 1) };
+                                // Patch dash array — LottieExporter writes `d` only when strokeDash is set,
+                                // so we must add/remove it here too on fast-path updates.
+                                if (node.style.strokeDash) {
+                                    const dashVals = (node.style.strokeDash as string).split(/[\s,]+/).map(Number).filter((n: number) => !isNaN(n) && n >= 0);
+                                    if (dashVals.length > 0) {
+                                        const d: any[] = [];
+                                        for (let i = 0; i < dashVals.length; i += 2) {
+                                            d.push({ n: 'd', nm: 'Dash', v: { a: 0, k: dashVals[i] } });
+                                            if (i + 1 < dashVals.length) d.push({ n: 'g', nm: 'Gap', v: { a: 0, k: dashVals[i + 1] } });
+                                        }
+                                        item.d = d;
+                                    } else {
+                                        delete item.d;
+                                    }
+                                } else {
+                                    delete item.d;
+                                }
                             }
-                            if (item.w) item.w = { a: 0, k: safeNum(node.style.strokeWidth, 1) };
-                            if (item.o) item.o = { a: 0, k: safeNum(node.style.strokeOpacity, 1) * 100 };
+                            if (!hasStrokeOpacAnims) item.o = { a: 0, k: safeNum(node.style.strokeOpacity, 1) * 100 };
+                            // Line cap and join have no keyframe support — always patch directly.
+                            item.lc = node.style.strokeLinecap === 'butt' ? 1 : (node.style.strokeLinecap === 'square' ? 3 : 2);
+                            item.lj = node.style.strokeLinejoin === 'miter' ? 1 : (node.style.strokeLinejoin === 'bevel' ? 3 : 2);
                         }
                     }
                 };
@@ -407,9 +443,9 @@ export const createAnimationSlice: StateCreator<CreatorStore, [["zustand/immer",
                 // Paths (sh) are skipped — bezier serialisation requires LottieExporter.
                 const walkGeom = (items: any[]) => {
                     for (const item of items) {
-                        if (item.ty === 'gr' && Array.isArray(item.it)) {
-                            walkGeom(item.it);
-                        } else if (item.ty === 'rc') {
+                        // Do NOT recurse into gr sub-groups — those belong to child nodes.
+                        // Descending would patch child shapes with the parent group's props.
+                        if (item.ty === 'rc') {
                             if (!hasWidthAnims && !hasHeightAnims && item.s?.a === 0) {
                                 item.s = { a: 0, k: [safeNum(node.props?.width, 100), safeNum(node.props?.height, 100)] };
                             }
@@ -1312,8 +1348,9 @@ export const createAnimationSlice: StateCreator<CreatorStore, [["zustand/immer",
             }
         });
 
-        // SMART ANCHOR FOLLOWING: If size changed, naturally maintain the anchor's relative pin
-        if (!manualAnchorChange && changingSizes.length > 0) {
+        // SMART ANCHOR FOLLOWING: If size changed, naturally maintain the anchor's relative pin.
+        // Skipped for path vertex editing (ignoreAnchorFollowing) so only the dragged vertex moves.
+        if (!manualAnchorChange && changingSizes.length > 0 && !options?.ignoreAnchorFollowing) {
             let nextW = 0, nextH = 0, n_ox = 0, n_oy = 0;
             if (nodeCopy.type === 'rect' || nodeCopy.type === 'artboard') {
                 nextW = nodeCopy.props.width;
@@ -1363,8 +1400,66 @@ export const createAnimationSlice: StateCreator<CreatorStore, [["zustand/immer",
         // bypassing the fast-path which only supports root layers.
         const isNestedImportedShape = !node._rawLottieData && (node._originalParsedFill !== undefined || node._originalParsedOpacity !== undefined);
 
-        const needsStructuralReload = didKeyframe || hasGradientUpdate || hasTrimUpdate || isNestedImportedShape;
-        const updates: any = { nodes: newNodes, updateCounter: state.updateCounter + 1, ...(needsStructuralReload && { structureChangeCounter: state.structureChangeCounter + 1 }) };
+        // Artboard background color/transparency changes affect the Lottie solid layer (ty:1) which
+        // patchLottieNode cannot update. Force slow-path re-export so the Background layer gets rebuilt.
+        const hasArtboardBgUpdate = node.type === 'artboard' && (
+            'props.backgroundColor' in processedUpdates ||
+            'props.transparent' in processedUpdates
+        );
+
+        // Blend mode changes write to the layer-level `bm` field which patchLottieNode never touches.
+        // Force slow-path so LottieExporter writes the correct bm value on the next re-export.
+        const hasBlendModeUpdate = 'style.blendMode' in processedUpdates;
+
+        // Adding a stroke for the first time requires creating a new `st` shape item in the Lottie
+        // JSON — patchLottieNode can only patch existing items, not add new ones. Trigger slow-path
+        // whenever stroke properties change on a node that currently has no complete stroke.
+        const hasStrokeStructuralUpdate =
+            ('style.stroke' in processedUpdates || 'style.strokeWidth' in processedUpdates) &&
+            !(node.style.stroke && node.style.strokeWidth);
+
+        // Always inject strokeAlign:'outside' on any stroke change so that:
+        //  (a) old nodes (created with 'center' default) get upgraded, and
+        //  (b) nodes that have 'outside' but were cached with incorrect item ordering
+        //      get a structural reload to rebuild the Lottie JSON with the correct order.
+        const hasStrokeChange = Object.keys(processedUpdates).some(k => k.startsWith('style.stroke'));
+        if (hasStrokeChange) {
+            processedUpdates['style.strokeAlign'] = 'outside';
+        }
+
+        // Stroke alignment changes reorder the fill/stroke items in the shapes array
+        // (outside → fill first; center/inside → stroke first). patchLottieNode cannot
+        // reorder array items, so always force a full re-export on alignment change.
+        const hasStrokeAlignUpdate = 'style.strokeAlign' in processedUpdates;
+
+        // Shape dimension changes (width, height, radii, roundness) modify the Lottie shape
+        // geometry (rc.s, el.s, rc.r) which patchLottieNode never patches. Force slow-path
+        // so LottieExporter rebuilds the correct shape (including the two-group outside-stroke
+        // structure) with the updated dimensions.
+        const hasShapeDimensionUpdate =
+            'props.width' in processedUpdates ||
+            'props.height' in processedUpdates ||
+            'props.radiusX' in processedUpdates ||
+            'props.radiusY' in processedUpdates ||
+            'props.roundness' in processedUpdates;
+
+        const needsStructuralReload = didKeyframe || hasGradientUpdate || hasTrimUpdate || isNestedImportedShape || hasArtboardBgUpdate || hasBlendModeUpdate || hasStrokeStructuralUpdate || hasStrokeAlignUpdate || hasShapeDimensionUpdate;
+
+        // Child-of-group: node is not in lottieNodeMap (not a top-level from-scratch layer)
+        // and has no imported cache entry. patchLottieNode can't update it, so lottieModel
+        // stays stale. Signal DotLottiePlayback to take the slow path (full re-export).
+        const isChildOfGroup = !state.lottieJsonCache &&
+            !state.lottieNodeMap?.has(nodeId) &&
+            state.lottieModel !== null &&
+            node.type !== 'artboard';
+        const needsChildUpdate = isChildOfGroup && !needsStructuralReload;
+
+        const updates: any = {
+            nodes: newNodes,
+            updateCounter: state.updateCounter + 1,
+            ...(needsStructuralReload && { structureChangeCounter: state.structureChangeCounter + 1 }),
+            ...(needsChildUpdate && { childUpdateCounter: state.childUpdateCounter + 1 }),
+        };
 
         if (node.type === 'artboard') {
             const newDuration = processedUpdates['props.duration'];
@@ -1388,8 +1483,9 @@ export const createAnimationSlice: StateCreator<CreatorStore, [["zustand/immer",
 
         newNodes.set(nodeId, nodeCopy);
         set(updates);
-        // Surgically patch the Lottie model for this node (no-op when neither cache nor model is available)
-        if (get().lottieJsonCache || get().lottieNodeMap?.has(nodeId)) get().patchLottieNode(nodeId);
+        // Surgically patch the Lottie model for this node (no-op when neither cache nor model is available).
+        // Skip when a structural reload is already triggered — the full re-export will rebuild everything.
+        if (!needsStructuralReload && (get().lottieJsonCache || get().lottieNodeMap?.has(nodeId))) get().patchLottieNode(nodeId);
     },
 
     shiftLayers: (nodeIds: string[], deltaFrames: number) => {

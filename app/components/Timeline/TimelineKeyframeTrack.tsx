@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, memo } from 'react';
+import { useMemo, useState, useRef, memo } from 'react';
 import { useCreatorStore } from '@/lib/creator/state/store';
 import { SceneNode } from '@/lib/creator/state/sceneSlice';
 import { AnimationUtils } from '@/lib/creator/core/Animation';
@@ -192,8 +192,18 @@ const TimelineKeyframeTrack = memo(function TimelineKeyframeTrack({
     const updateNode = useCreatorStore((state) => state.updateNode);
     const shiftLayers = useCreatorStore((state) => state.shiftLayers);
 
+    const [isBlinking, setIsBlinking] = useState(false);
+    const blinkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const triggerLockBlink = () => {
+        if (blinkTimer.current) clearTimeout(blinkTimer.current);
+        setIsBlinking(true);
+        blinkTimer.current = setTimeout(() => setIsBlinking(false), 700);
+    };
+
     const handleBarMouseDown = (e: React.MouseEvent, type: 'shift' | 'trim-in' | 'trim-out') => {
         e.stopPropagation();
+        if (node.locked) { triggerLockBlink(); return; }
         onSelect(node.id, e.shiftKey, e.ctrlKey || e.metaKey);
 
         const startX = e.clientX;
@@ -258,11 +268,11 @@ const TimelineKeyframeTrack = memo(function TimelineKeyframeTrack({
                 {/* Visual bar — spans in-point to out-point */}
                 {depth === 0 && (
                     <div
-                        className="absolute top-[2px] bottom-[2px] rounded-[4px] flex items-center cursor-grab active:cursor-grabbing transition-opacity duration-150 hover:opacity-90"
+                        className={`absolute top-[2px] bottom-[2px] rounded-[4px] flex items-center cursor-grab active:cursor-grabbing hover:opacity-90${isBlinking ? ' layer-locked-blink' : ' transition-opacity duration-150'}`}
                         style={{
                             left: node.inPoint * pixelsPerFrame,
                             width: Math.max(4, (node.outPoint - node.inPoint) * pixelsPerFrame),
-                            background: barBg,
+                            background: isBlinking ? undefined : barBg,
                         }}
                         onMouseDown={(e) => handleBarMouseDown(e, 'shift')}
                     >

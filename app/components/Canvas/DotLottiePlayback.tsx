@@ -22,6 +22,9 @@ interface Props {
   containerHeight: number;
   /** Whether the ThorVG canvas is visible */
   visible: boolean;
+  /** When true the canvas stays in the DOM (so setFrame() keeps running) but is invisible.
+   *  Used during path/text editing so Canvas2D can show live edits without ThorVG covering them. */
+  transparent?: boolean;
 }
 
 // Clamp zoom for canvas sizing — avoid creating excessively large textures
@@ -55,6 +58,7 @@ export function DotLottiePlayback({
   containerWidth,
   containerHeight,
   visible,
+  transparent = false,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dotLottieRef = useRef<DotLottie | null>(null);
@@ -81,8 +85,10 @@ export function DotLottiePlayback({
   const afterLoadRafRef = useRef<number | null>(null);
 
   // --- Export / load caches (Tier 2) ---
-  // exportCache: last LottieExporter output, keyed by updateCounter
-  const exportCache = useRef<{ counter: number; data: Record<string, unknown> } | null>(null);
+  // exportCache: last LottieExporter output, keyed by updateCounter + activeArtboardId.
+  // activeArtboardId is part of the key because switching artboards changes which artboard
+  // is the Lottie root — the same updateCounter with a different artboardId is a different export.
+  const exportCache = useRef<{ counter: number; artboardId: string | null; data: Record<string, unknown> } | null>(null);
   // Which updateCounter value is currently loaded in ThorVG (set in 'load' event handler)
   const lastLoadedCounter = useRef<number>(-1);
   // Which updateCounter we sent to dl.load() most recently (captures the value before load fires)
@@ -91,6 +97,13 @@ export function DotLottiePlayback({
   // When structureChangeCounter hasn't changed, surgical patches keep lottieModel current and
   // DotLottiePlayback can reload from lottieModel directly — skipping LottieExporter entirely.
   const lastStructureCounter = useRef<number>(-1);
+  // childUpdateCounter at last full re-export. When it has advanced, a child-of-group node
+  // was edited (patchLottieNode skips these) and lottieModel is stale — must use slow path.
+  const lastChildUpdateCounter = useRef<number>(-1);
+  // Which activeArtboardId was in effect when ThorVG last finished loading. Switching artboards
+  // without any node edits leaves updateCounter unchanged, so lastLoadedCounter alone can't
+  // detect the change — the early-exit guard must also compare artboard IDs.
+  const lastLoadedArtboardId = useRef<string | null>(null);
 
   const rawAnimationSource = useCreatorStore(s => s.rawAnimationSource);
   const isPlaying = useCreatorStore(s => s.isPlaying);
@@ -98,6 +111,7 @@ export function DotLottiePlayback({
   const currentTime = useCreatorStore(s => s.currentTime);
   const updateCounter = useCreatorStore(s => s.updateCounter);
   const structureChangeCounter = useCreatorStore(s => s.structureChangeCounter);
+  const childUpdateCounter = useCreatorStore(s => s.childUpdateCounter);
 
   const dprRef = useRef(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1);
   // Track last zoom used to size the canvas so we only resize when it actually changes
@@ -140,16 +154,18 @@ export function DotLottiePlayback({
     renderConfig: { devicePixelRatio: dprRef.current },
   });
 
-  // Returns cached export data if the counter matches, otherwise runs LottieExporter and caches.
-  const getExportedData = (counter: number): Record<string, unknown> => {
-    if (exportCache.current?.counter === counter) {
+  // Returns cached export data if counter AND activeArtboardId both match, otherwise re-exports.
+  // activeArtboardId controls which artboard is the Lottie root — a different artboard with
+  // the same updateCounter still requires a fresh export.
+  const getExportedData = (counter: number, artboardId: string | null): Record<string, unknown> => {
+    if (exportCache.current?.counter === counter && exportCache.current?.artboardId === artboardId) {
       return exportCache.current.data;
     }
     const state = useCreatorStore.getState();
     const data = LottieExporter.export(
-      state.nodes, state.fps, state.duration, state.flowBlocks ?? []
+      state.nodes, state.fps, state.duration, state.flowBlocks ?? [], artboardId ?? undefined
     ) as unknown as Record<string, unknown>;
-    exportCache.current = { counter, data };
+    exportCache.current = { counter, artboardId, data };
     return data;
   };
 
@@ -174,6 +190,7 @@ export function DotLottiePlayback({
     exportCache.current = null;
     pendingLoadCounter.current = -1;
     lastLoadedCounter.current = -1;
+    lastLoadedArtboardId.current = null;
 
     const dpr = dprRef.current;
     const clampedZoom = Math.min(viewportZoom, MAX_CANVAS_ZOOM);
@@ -200,7 +217,7 @@ export function DotLottiePlayback({
       const st = useCreatorStore.getState();
       if (st.nodes.size > 0) {
         const counter = st.updateCounter;
-        initialData = getExportedData(counter);  // also warms exportCache
+        initialData = getExportedData(counter, st.activeArtboardId ?? null);  // also warms exportCache
         initialCounter = counter;
       } else if (rawAnimationSource) {
         initialData = rawAnimationSource as Record<string, unknown>;
@@ -234,6 +251,9 @@ export function DotLottiePlayback({
       wasEverInitialized.current = true;
       // Record which updateCounter is now live in ThorVG
       lastLoadedCounter.current = pendingLoadCounter.current;
+      // Record which artboard was loaded — switching artboards with the same updateCounter
+      // must not be skipped by the early-exit guard in the debounced effect.
+      lastLoadedArtboardId.current = useCreatorStore.getState().activeArtboardId ?? null;
       // Phase 4.7: sync lastStructureCounter so the debounced effect knows the structure
       // that was in effect at the time of this load — enabling the fast path immediately.
       lastStructureCounter.current = useCreatorStore.getState().structureChangeCounter;
@@ -357,7 +377,7 @@ export function DotLottiePlayback({
 
     // Slow path: export (cached if possible) and reload ThorVG before playing.
     try {
-      const lottieData = getExportedData(currentCounter);
+      const lottieData = getExportedData(currentCounter, useCreatorStore.getState().activeArtboardId ?? null);
       pendingPlay.current = true;
       pendingLoadCounter.current = currentCounter;
       isInitialized.current = false;
@@ -406,9 +426,12 @@ export function DotLottiePlayback({
       if (!dlCurrent) return;
 
       const currentCounter = state.updateCounter;
+      const currentArtboardId = state.activeArtboardId ?? null;
 
-      // ThorVG already has this exact data — nothing to do
-      if (lastLoadedCounter.current === currentCounter) return;
+      // ThorVG already has this exact artboard + data — nothing to do.
+      // Must check artboardId too: switching artboards leaves updateCounter unchanged but
+      // requires a full re-export with the new artboard as the Lottie root.
+      if (lastLoadedCounter.current === currentCounter && lastLoadedArtboardId.current === currentArtboardId) return;
 
       const currentStructureCounter = state.structureChangeCounter;
 
@@ -416,18 +439,21 @@ export function DotLottiePlayback({
       // during the brief WASM load window). Cleared in the 'load' event handler.
       useCreatorStore.getState().setLottieNeedsReload(true);
 
-      // Phase 4.7 — Fast path: structure unchanged and lottieModel is current.
+      // Phase 4.7 — Fast path: structure unchanged, no child-of-group edits, lottieModel current.
       // patchLottieNode (steps 4.3–4.6) already updated lottieModel in-place for all
-      // property-only edits. Reload directly from lottieModel — zero LottieExporter cost.
+      // top-level property edits. Reload directly from lottieModel — zero LottieExporter cost.
+      // Fast path is skipped when childUpdateCounter advanced: child-of-group edits bypass
+      // patchLottieNode so lottieModel is stale and a full re-export is required.
       // exportCache is updated so the 'load' handler calls setLottieModel correctly.
       if (
         currentStructureCounter === lastStructureCounter.current &&
+        state.childUpdateCounter === lastChildUpdateCounter.current &&
         state.lottieModel !== null &&
         lastLoadedCounter.current >= 0
       ) {
         try {
           const model = state.lottieModel as Record<string, unknown>;
-          exportCache.current = { counter: currentCounter, data: model };
+          exportCache.current = { counter: currentCounter, artboardId: state.activeArtboardId ?? null, data: model };
           pendingPlay.current = false;
           pendingLoadCounter.current = currentCounter;
           isInitialized.current = false;
@@ -445,10 +471,11 @@ export function DotLottiePlayback({
         return;
       }
 
-      // Slow path: structural change (node added/removed/reordered) — full re-export.
+      // Slow path: structural change or child-of-group edit — full re-export.
       lastStructureCounter.current = currentStructureCounter;
+      lastChildUpdateCounter.current = state.childUpdateCounter;
       try {
-        const lottieData = getExportedData(currentCounter);
+        const lottieData = getExportedData(currentCounter, state.activeArtboardId ?? null);
         pendingPlay.current = false;
         pendingLoadCounter.current = currentCounter;
         isInitialized.current = false;
@@ -470,7 +497,7 @@ export function DotLottiePlayback({
       }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [updateCounter, structureChangeCounter]);
+  }, [updateCounter, structureChangeCounter, childUpdateCounter]);
 
   // Seek when user scrubs the timeline while paused
   useEffect(() => {
@@ -513,7 +540,10 @@ export function DotLottiePlayback({
       <canvas
         ref={canvasRef}
         style={{
+          // Keep display:block even when transparent so setFrame() keeps committing frames.
+          // opacity:0 hides the canvas visually while allowing Canvas2D (z-20) to show through.
           display: visible ? 'block' : 'none',
+          opacity: transparent ? 0 : 1,
           position: 'absolute',
           left: 0,
           top: 0,

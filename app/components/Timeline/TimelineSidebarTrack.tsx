@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState, useEffect, useRef, memo } from 'react';
+import { createPortal } from 'react-dom';
 import { useCreatorStore } from '@/lib/creator/state/store';
 import { ChevronRight, ChevronDown, Timer, Link2, Box, Circle, Layers, Diamond, Link as LinkIcon, HardDrive, Plus, X, Folder, Image as ImageIcon, Zap, Star, Layout, Component, Square, PenTool, Type, MousePointer2 } from 'lucide-react';
 import { AnimationUtils } from '@/lib/creator/core/Animation';
@@ -42,9 +43,18 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
     const expandedShapeGroups = useCreatorStore((state) => state.expandedShapeGroups);
     const toggleShapeGroupExpand = useCreatorStore((state) => state.toggleShapeGroupExpand);
     const addKeyframe = useCreatorStore((state) => state.addKeyframe);
+    const structureChangeCounter = useCreatorStore((state) => state.structureChangeCounter);
 
     const [dropPosition, setDropPosition] = useState<'before' | 'after' | 'inside' | null>(null);
-    const itemRef = useRef<HTMLDivElement>(null);
+    const [isBlinking, setIsBlinking] = useState(false);
+    const itemRef    = useRef<HTMLDivElement>(null);
+    const blinkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const triggerLockBlink = () => {
+        if (blinkTimer.current) clearTimeout(blinkTimer.current);
+        setIsBlinking(true);
+        blinkTimer.current = setTimeout(() => setIsBlinking(false), 700);
+    };
     const [isAnimateMenuOpen, setIsAnimateMenuOpen] = useState(false);
     const [animateMenuPos, setAnimateMenuPos] = useState({ x: 0, y: 0 });
     const [isAnimateMoreOpen, setIsAnimateMoreOpen] = useState(false);
@@ -335,7 +345,7 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
                 !isDescendantOfSelf(n.id)
             )
             .sort((a, b) => a.name.localeCompare(b.name));
-    }, [node.id]);
+    }, [node.id, structureChangeCounter]);
 
     // Design tokens (Figma 2001-1051)
     const ROW_BG     = isSelected ? 'rgba(221,234,248,0.30)' : dropPosition === 'inside' ? 'rgba(221,234,248,0.20)' : 'rgba(221,234,248,0.08)';
@@ -355,12 +365,13 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
                 onDragOver={onDragOver}
                 onDragLeave={onDragLeave}
                 onDrop={onDrop}
-                className="flex items-center cursor-default relative transition-colors"
-                style={{ height: rowHeight, background: ROW_BG, borderRadius: 4 }}
+                className={`flex items-center cursor-default relative${isBlinking ? ' layer-locked-blink' : ' transition-colors'}`}
+                style={{ height: rowHeight, background: isBlinking ? undefined : ROW_BG, borderRadius: 4 }}
                 onMouseDownCapture={(e) => {
                     const target = e.target as HTMLElement;
                     if (target.closest('.animate-popup')) return;
                     e.stopPropagation();
+                    if (node.locked) { triggerLockBlink(); return; }
                     const isInteractive = target.closest('button') || target.closest('select') || target.closest('input');
                     if (isInteractive && isSelected) return;
                     onSelect(e.shiftKey, e.ctrlKey || e.metaKey);
@@ -413,7 +424,7 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
                     </div>
 
                     {/* Layer name */}
-                    <span className="text-[13px] truncate flex-1 min-w-0" style={{ color: TEXT_COLOR, fontWeight: 400 }}>
+                    <span className="text-[11px] truncate flex-1 min-w-0" style={{ color: TEXT_COLOR, fontWeight: 400 }}>
                         {node.name}
                     </span>
 
@@ -432,7 +443,7 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
                             className="flex items-center justify-between w-full h-6 px-2 rounded-[3px] transition-colors hover:opacity-80"
                             style={{ background: SEL_BG, border: `1px solid ${SEL_BD}` }}
                         >
-                            <span className="truncate flex-1 text-left" style={{ color: SEL_TEXT, fontSize: 12, lineHeight: '16px' }}>
+                            <span className="truncate flex-1 text-left" style={{ color: SEL_TEXT, fontSize: 11, lineHeight: '16px' }}>
                                 {node.parentLayerId ? (potentialParents.find(p => p.id === node.parentLayerId)?.name ?? 'None') : 'None'}
                             </span>
                             <ChevronDown size={10} style={{ color: SEL_TEXT, flexShrink: 0 }} />
@@ -464,7 +475,7 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
                                                 handleSetParent(p.id || null);
                                                 setParentDropdownOpen(false);
                                             }}
-                                            className="w-full text-left px-3 py-1.5 text-[12px] transition-colors hover:bg-white/10"
+                                            className="w-full text-left px-3 py-1.5 text-[11px] transition-colors hover:bg-white/10"
                                             style={{ color: isActive ? 'var(--accent)' : 'rgba(241,247,254,0.71)' }}
                                         >
                                             {p.name}
@@ -512,17 +523,18 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
                     })()}
                 </div>
 
-                {/* Animate Properties Popover */}
-                {isAnimateMenuOpen && (
+                {/* Animate Properties Popover — rendered via portal so it escapes the
+                    timeline panel's stacking context and always appears above the canvas. */}
+                {isAnimateMenuOpen && createPortal(
                     <div
                         ref={animateMenuRef}
                         className="fixed z-[9999] w-48 bg-[#18181b] border border-white/10 rounded-xl shadow-2xl flex flex-col overflow-hidden text-sm animate-popup"
                         style={{
                             left: animateMenuPos.x,
                             top: animateMenuPos.y,
-                            maxHeight: 'calc(100vh - 40px)' // Ensure it doesn't exceed viewport
+                            maxHeight: 'calc(100vh - 40px)'
                         }}
-                        onMouseDown={(e) => e.stopPropagation()} // Prevent row click selection
+                        onMouseDown={(e) => e.stopPropagation()}
                     >
                         {/* Header / Drag Handle */}
                         <div
@@ -671,7 +683,8 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
                                 );
                             })()}
                         </div>
-                    </div>
+                    </div>,
+                    document.body
                 )}
             </div>
 

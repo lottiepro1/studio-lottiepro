@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, memo } from 'react';
+import { useState, useRef, useCallback, memo } from 'react';
 import { useCreatorStore } from '@/lib/creator/state/store';
 import {
   ChevronRight,
@@ -35,7 +35,15 @@ export const LayerItem = memo(function LayerItem({
   const [isEditing, setIsEditing]   = useState(false);
   const [tempName,  setTempName]    = useState(node?.name || '');
   const [dropPos,   setDropPos]     = useState<'before' | 'after' | 'inside' | null>(null);
-  const itemRef = useRef<HTMLDivElement>(null);
+  const [isBlinking, setIsBlinking] = useState(false);
+  const itemRef     = useRef<HTMLDivElement>(null);
+  const blinkTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const triggerLockBlink = useCallback(() => {
+    if (blinkTimer.current) clearTimeout(blinkTimer.current);
+    setIsBlinking(true);
+    blinkTimer.current = setTimeout(() => setIsBlinking(false), 700);
+  }, []);
 
   const isSelected   = !!node && selectedIds.includes(node.id);
   const hasChildren  = !!node && !!node.children?.length;
@@ -66,15 +74,43 @@ export const LayerItem = memo(function LayerItem({
   const handleToggleVisibility = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!node) return;
-    useCreatorStore.getState().pushToHistory(`${node.visible ? 'Hide' : 'Show'} ${node.name}`);
-    updateNode(node.id, { visible: !node.visible });
+    const hiding = node.visible;
+    const store = useCreatorStore.getState();
+    // If clicked node is part of a multi-selection, apply to all selected nodes
+    const targetIds = selectedIds.includes(node.id) && selectedIds.length > 1
+      ? selectedIds
+      : [node.id];
+    store.pushToHistory(targetIds.length > 1
+      ? (hiding ? 'Hide Layers' : 'Show Layers')
+      : (hiding ? `Hide ${node.name}` : `Show ${node.name}`)
+    );
+    targetIds.forEach(id => updateNode(id, { visible: !hiding }));
+    if (hiding) {
+      // Deselect all nodes that were just hidden
+      const remaining = selectedIds.filter(id => !targetIds.includes(id));
+      store.setSelection(remaining);
+    }
   };
 
   const handleToggleLock = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!node) return;
-    useCreatorStore.getState().pushToHistory(`${node.locked ? 'Unlock' : 'Lock'} ${node.name}`);
-    updateNode(node.id, { locked: !node.locked });
+    const locking = !node.locked;
+    const store = useCreatorStore.getState();
+    // If clicked node is part of a multi-selection, apply to all selected nodes
+    const targetIds = selectedIds.includes(node.id) && selectedIds.length > 1
+      ? selectedIds
+      : [node.id];
+    store.pushToHistory(targetIds.length > 1
+      ? (locking ? 'Lock Layers' : 'Unlock Layers')
+      : (locking ? `Lock ${node.name}` : `Unlock ${node.name}`)
+    );
+    targetIds.forEach(id => updateNode(id, { locked: locking }));
+    if (locking) {
+      // Deselect all nodes that were just locked
+      const remaining = selectedIds.filter(id => !targetIds.includes(id));
+      store.setSelection(remaining);
+    }
   };
 
   const handleRename = () => {
@@ -150,17 +186,22 @@ export const LayerItem = memo(function LayerItem({
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
-      onClick={e => { e.stopPropagation(); onSelect(e.shiftKey, e.ctrlKey || e.metaKey); }}
+      onClick={e => {
+        e.stopPropagation();
+        if (node.locked) { triggerLockBlink(); return; }
+        onSelect(e.shiftKey, e.ctrlKey || e.metaKey);
+      }}
       onDoubleClick={() => {
+        if (node.locked) return;
         if (node.type === 'precomp' && node.refId) setActiveArtboard(node.refId);
         else { setIsEditing(true); setTempName(node.name); }
       }}
-      className="group flex items-center h-8 cursor-pointer rounded relative transition-colors"
+      className={`group flex items-center h-8 cursor-pointer rounded relative${isBlinking ? ' layer-locked-blink' : ' transition-colors'}`}
       style={{
         paddingLeft:  `${depth * 16 + 12}px`,
         paddingRight: '12px',
         gap:          '8px',
-        background:   isSelected ? SEL_BG : ROW_BG,
+        background:   isBlinking ? undefined : (isSelected ? SEL_BG : ROW_BG),
         ...(dropPos === 'inside' ? { outline: '1px solid var(--accent)' } : {}),
       }}
     >
@@ -198,7 +239,7 @@ export const LayerItem = memo(function LayerItem({
         {isEditing ? (
           <input
             autoFocus
-            className="w-full bg-transparent text-[13px] outline-none rounded"
+            className="w-full bg-transparent text-[11px] outline-none rounded"
             style={{ color: NAME_COLOR, caretColor: 'var(--accent)' }}
             value={tempName}
             onChange={e => setTempName(e.target.value)}
@@ -210,7 +251,7 @@ export const LayerItem = memo(function LayerItem({
             onClick={e => e.stopPropagation()}
           />
         ) : (
-          <span className="text-[13px] truncate block" style={{ color: NAME_COLOR, fontWeight: 400 }}>
+          <span className="text-[11px] truncate block" style={{ color: NAME_COLOR, fontWeight: 400 }}>
             {node.name}
           </span>
         )}

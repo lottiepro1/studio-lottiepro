@@ -54,7 +54,7 @@ export default function TimelinePanel() {
   const activeArtboardId = useCreatorStore((state) => state.activeArtboardId);
   const setActiveArtboard = useCreatorStore((state) => state.setActiveArtboard);
   const addFlowBlock = useCreatorStore((state) => state.addFlowBlock);
-  const setSegmentsPanelOpen = useCreatorStore((state) => state.setSegmentsPanelOpen);
+  const setActiveLayersTab = useCreatorStore((state) => state.setActiveLayersTab);
   const isTimelineCollapsed = useCreatorStore((state) => state.isTimelineCollapsed);
   const setTimelineCollapsed = useCreatorStore((state) => state.setTimelineCollapsed);
 
@@ -128,25 +128,42 @@ export default function TimelinePanel() {
   useEffect(() => {
     const timeline = timelineRef.current;
     if (!timeline) return;
+
+    // Resize only updates viewport width — never resets user zoom (avoids the
+    // ResizeObserver feedback loop where scrollbar toggling fires doFit → zoom reset).
     const handleResize = () => {
-      const state = useCreatorStore.getState();
-      const containerWidth = timeline.clientWidth - timelinePaddingLeft - 80;
-      if (containerWidth <= 0) return;
-      setViewportWidth(timeline.clientWidth);
-      const currentContentWidth = duration * basePixelsPerFrame * state.zoomLevel;
-      if (currentContentWidth < containerWidth || state.zoomLevel < 0.1) {
-        setZoomLevel((containerWidth / (duration || 1)) / basePixelsPerFrame);
-      }
+      if (timeline.clientWidth > 0) setViewportWidth(timeline.clientWidth);
     };
+
     const handleScroll = () => {
       setScrollLeft(timeline.scrollLeft);
       if (sidebarRef.current) sidebarRef.current.scrollTop = timeline.scrollTop;
     };
-    const timer = setTimeout(handleResize, 50);
+
+    const handleSidebarScroll = () => {
+      if (timelineRef.current) timelineRef.current.scrollTop = sidebarRef.current!.scrollTop;
+    };
+
+    // Fit to show full duration on mount and whenever duration changes.
+    // Use a short delay so the panel has settled its final width.
+    const timer = setTimeout(() => {
+      const containerWidth = timeline.clientWidth - timelinePaddingLeft - 80;
+      if (containerWidth <= 0) return;
+      setViewportWidth(timeline.clientWidth);
+      setZoomLevel((containerWidth / (duration || 1)) / basePixelsPerFrame);
+    }, 50);
+
     const observer = new ResizeObserver(handleResize);
     observer.observe(timeline);
     timeline.addEventListener('scroll', handleScroll, { passive: true });
-    return () => { clearTimeout(timer); observer.disconnect(); timeline.removeEventListener('scroll', handleScroll); };
+    sidebarRef.current?.addEventListener('scroll', handleSidebarScroll, { passive: true });
+    const sidebar = sidebarRef.current;
+    return () => {
+      clearTimeout(timer);
+      observer.disconnect();
+      timeline.removeEventListener('scroll', handleScroll);
+      sidebar?.removeEventListener('scroll', handleSidebarScroll);
+    };
   }, [duration]);
 
   // ── Keyboard shortcuts ────────────────────────────────────────────────────
@@ -198,6 +215,16 @@ export default function TimelinePanel() {
 
   // ── Scrubbing ─────────────────────────────────────────────────────────────
   const startScrubbing = (gridArea: HTMLElement, e: React.MouseEvent | MouseEvent) => {
+    // Stop playback on ruler click/drag — matches AE behaviour.
+    if (useCreatorStore.getState().isPlaying) {
+      // Pre-set playbackRef.frame to the clicked position so that DotLottiePlayback's
+      // isPlaying→false effect syncs currentTime to the right frame instead of
+      // the last playing frame (which would override the clicked position).
+      const rect = gridArea.getBoundingClientRect();
+      const x = (e as MouseEvent).clientX - rect.left - timelinePaddingLeft;
+      playbackRef.frame = Math.max(0, Math.min(duration - 1, Math.round(x / pixelsPerFrame)));
+      useCreatorStore.getState().setPlaying(false);
+    }
     const onMouseMove = (moveE: MouseEvent) => {
       const rect = gridArea.getBoundingClientRect();
       const x = moveE.clientX - rect.left - timelinePaddingLeft;
@@ -281,7 +308,9 @@ export default function TimelinePanel() {
       if (startIdx !== -1 && endIdx !== -1) {
         const min = Math.min(startIdx, endIdx);
         const max = Math.max(startIdx, endIdx);
-        const range = allIds.slice(min, max + 1);
+        // Skip locked layers in range selections
+        const nodesMap = useCreatorStore.getState().nodes;
+        const range = allIds.slice(min, max + 1).filter(id => !nodesMap.get(id)?.locked);
         setSelection(isCtrl ? Array.from(new Set([...currentSelected, ...range])) : range);
         return;
       }
@@ -459,17 +488,24 @@ export default function TimelinePanel() {
             <button
               key={ab.id}
               onClick={() => setActiveArtboard(ab.id)}
-              className="px-4 h-8 flex items-center shrink-0 transition-all text-[13px]"
+              className="px-4 h-8 flex items-center shrink-0 transition-colors text-[13px]"
               style={isActive
                 ? {
                     background: TAB_ACTIVE_BG,
                     color: 'rgba(252,253,255,0.94)',
                     fontWeight: 510,
-                    border: `1px solid ${TAB_ACTIVE_BD}`,
+                    borderTop: `1px solid ${TAB_ACTIVE_BD}`,
+                    borderLeft: `1px solid ${TAB_ACTIVE_BD}`,
+                    borderRight: `1px solid ${TAB_ACTIVE_BD}`,
                     borderBottom: 'none',
                     borderRadius: '4px 4px 0 0',
                   }
                 : {
+                    background: 'transparent',
+                    borderTop: '1px solid transparent',
+                    borderLeft: '1px solid transparent',
+                    borderRight: '1px solid transparent',
+                    borderBottom: 'none',
                     color: TEXT_DIM,
                     fontWeight: 400,
                   }
@@ -538,7 +574,7 @@ export default function TimelinePanel() {
             backgroundAttachment: 'local',
           }}
         >
-          <div className="relative" style={{ width: totalWidth + 200 }}>
+          <div className="relative" style={{ width: Math.max(totalWidth + timelinePaddingLeft, viewportWidth) }}>
 
             {/* ── Grid Area ──────────────────────────────────────────── */}
             <div
@@ -555,7 +591,7 @@ export default function TimelinePanel() {
                   {/* Tick marks — label top, tick bottom (Figma 2001-1051) */}
                   {rulerTicks.map((f, i) => {
                     const s = Math.floor(f / fps);
-                    const frames = f % fps;
+                    const frames = Math.round(f % fps);
                     const label = frames === 0 ? `${s}s` : `${frames}f`;
                     const isSec = frames === 0;
                     return (
@@ -659,7 +695,7 @@ export default function TimelinePanel() {
             style={{ left: workAreaMenu.x, top: workAreaMenu.y, background: '#18181b', border: '1px solid rgba(255,255,255,0.10)', boxShadow: 'var(--shadow-lg)' }}
             onMouseDown={(e) => e.stopPropagation()}
           >
-            <button onClick={() => { addFlowBlock({ name: 'New Segment', startFrame: workAreaStart ?? 0, endFrame: workAreaEnd ?? duration, loop: true }); setSegmentsPanelOpen(true); setWorkAreaMenu(null); }} className="w-full text-left px-3 py-2 hover:bg-accent/10 hover:text-accent transition-colors flex items-center gap-2" style={{ color: TEXT_COLOR }}>
+            <button onClick={() => { addFlowBlock({ name: 'New Segment', startFrame: workAreaStart ?? 0, endFrame: workAreaEnd ?? duration, loop: true }); setActiveLayersTab('segments'); setWorkAreaMenu(null); }} className="w-full text-left px-3 py-2 hover:bg-accent/10 hover:text-accent transition-colors flex items-center gap-2" style={{ color: TEXT_COLOR }}>
               Set work area as segment
             </button>
             <button onClick={() => { const start = workAreaStart ?? 0; const end = workAreaEnd ?? duration; useCreatorStore.getState().setDuration(end - start); useCreatorStore.getState().shiftLayers(Array.from(useCreatorStore.getState().nodes.keys()), -start); useCreatorStore.getState().setWorkArea(null, null); setWorkAreaMenu(null); useCreatorStore.getState().setCurrentTime(0); }} className="w-full text-left px-3 py-2 hover:bg-white/10 transition-colors" style={{ color: TEXT_COLOR }}>

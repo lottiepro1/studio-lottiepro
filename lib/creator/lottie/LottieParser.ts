@@ -860,6 +860,86 @@ export class LottieParser {
             }
         });
 
+        // Pass 2: Collapse isLayer wrapper groups that contain a single leaf shape.
+        // Restores round-trip fidelity for standalone shapes exported as Shape Layers:
+        //   layer_group(isLayer) → rect   becomes just   rect(isLayer)
+        // The transform formula (t1.x - t1.anchorX + t2.x) correctly recovers the original
+        // editor position because rc.p is the shape center (w/2, h/2) and ks.p is the
+        // original editor position, so the offsets cancel out.
+        artboards.forEach(artboard => {
+            const newArtboardChildren: string[] = [];
+            for (const childId of artboard.children) {
+                const child = nodeMap.get(childId);
+                if (
+                    child &&
+                    child.type === 'group' &&
+                    child.props?.isLayer &&
+                    child.children.length === 1
+                ) {
+                    const grandchildId = child.children[0];
+                    const grandchild = nodeMap.get(grandchildId);
+                    // Only collapse when the original layer's shapes were NOT gr items.
+                    // If _rawLottieData.shapes contains a 'gr', the layer was a group layer
+                    // (group + children) and the layer_group node must be preserved as-is.
+                    const rawShapes: any[] = child._rawLottieData?.shapes ?? [];
+                    const hadGrItems = rawShapes.some((s: any) => s.ty === 'gr');
+                    if (
+                        grandchild &&
+                        !hadGrItems &&
+                        (grandchild.type === 'rect' || grandchild.type === 'ellipse' || grandchild.type === 'path')
+                    ) {
+                        const t1 = child.transform;
+                        const t2 = grandchild.transform;
+                        const mergedNode: SceneNode = {
+                            ...grandchild,
+                            id: child.id,
+                            name: (child.name && child.name !== 'Group') ? child.name : grandchild.name,
+                            parentId: artboard.id,
+                            parentLayerId: child.parentLayerId || grandchild.parentLayerId,
+                            props: { ...grandchild.props, isLayer: true },
+                            transform: {
+                                ...grandchild.transform,
+                                x: (t1.x || 0) - (t1.anchorX || 0) + (t2.x || 0),
+                                y: (t1.y || 0) - (t1.anchorY || 0) + (t2.y || 0),
+                                rotation: (t1.rotation || 0) + (t2.rotation || 0),
+                                scaleX: (t1.scaleX ?? 1) * (t2.scaleX ?? 1),
+                                scaleY: (t1.scaleY ?? 1) * (t2.scaleY ?? 1),
+                            },
+                            style: { ...child.style, ...grandchild.style },
+                            animations: { ...(child.animations || {}), ...(grandchild.animations || {}) },
+                            _rawLottieData: child._rawLottieData,
+                            _importSupport: child._importSupport,
+                            _importWarnings: child._importWarnings,
+                            _originalParsedFill: child._originalParsedFill ?? grandchild._originalParsedFill,
+                            _originalParsedStroke: child._originalParsedStroke ?? grandchild._originalParsedStroke,
+                            _originalParsedStrokeWidth: child._originalParsedStrokeWidth ?? grandchild._originalParsedStrokeWidth,
+                            _originalParsedX: child._originalParsedX,
+                            _originalParsedY: child._originalParsedY,
+                            _originalParsedRotation: child._originalParsedRotation,
+                            _originalParsedScaleX: child._originalParsedScaleX,
+                            _originalParsedScaleY: child._originalParsedScaleY,
+                            _originalParsedOpacity: child._originalParsedOpacity ?? grandchild._originalParsedOpacity,
+                            masks: child.masks ? [...(child.masks || []), ...(grandchild.masks || [])] : grandchild.masks,
+                            inPoint: Math.max(child.inPoint, grandchild.inPoint),
+                            outPoint: Math.min(child.outPoint, grandchild.outPoint),
+                            visible: child.visible && grandchild.visible,
+                            locked: child.locked || grandchild.locked,
+                        };
+                        nodeMap.set(child.id, mergedNode);
+                        nodeMap.delete(grandchildId);
+                        const gcIdx = nodes.indexOf(grandchild);
+                        if (gcIdx !== -1) nodes.splice(gcIdx, 1);
+                        const childIdx = nodes.indexOf(child);
+                        if (childIdx !== -1) nodes[childIdx] = mergedNode;
+                        newArtboardChildren.push(child.id);
+                        continue;
+                    }
+                }
+                newArtboardChildren.push(childId);
+            }
+            artboard.children = newArtboardChildren;
+        });
+
         // Rebuild the array from the map to ensure no duplicates or orphans
         nodes.length = 0;
         nodes.push(...Array.from(nodeMap.values()));
