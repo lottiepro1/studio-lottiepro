@@ -165,7 +165,11 @@ export class LottieExporter {
 
             // ThorVG does not reliably honor hd:1. Omit hidden nodes entirely so they
             // are never present in the JSON and cannot be rendered.
-            if (node.visible === false) return;
+            // Exception: matte source nodes must be kept — they are marked visible=false by the
+            // parser so they don't render directly, but ThorVG needs them present (as td:1 layers)
+            // for track mattes to work. Pass 2 below sets td:1 and removes hd for these.
+            const isMatteSource = !!(node.matteTargetIds && node.matteTargetIds.length > 0);
+            if (node.visible === false && !isMatteSource) return;
 
             // Lottie Layer Eligibility: only direct artboard children become standalone layers.
             // A node with isLayer:true that has been moved inside a group must be embedded

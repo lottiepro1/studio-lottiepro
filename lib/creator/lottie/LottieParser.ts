@@ -107,6 +107,7 @@ export class LottieParser {
         const flowBlocks: FlowBlock[] = [];
 
         const fps = animation.fr || 30;
+        const ipOffset = animation.ip || 0; // AE compositions can start at non-zero frames; normalize to 0-based
         const duration = (animation.op - animation.ip) || 150;
         const width = animation.w || 800;
         const height = animation.h || 600;
@@ -216,6 +217,16 @@ export class LottieParser {
             const layer = validLayers[i];
             const { baseNode, children } = this.parseLayer(layer, assetMetadata); // Main layer
             if (baseNode) {
+                // Normalize main-composition layer timing to 0-based when the AE project has a
+                // non-zero start frame (ip > 0). Precomp asset layers are NOT adjusted here
+                // because they reference their own asset timeline which is already 0-based.
+                if (ipOffset !== 0) {
+                    baseNode.inPoint = (baseNode.inPoint ?? 0) - ipOffset;
+                    baseNode.outPoint = (baseNode.outPoint ?? 0) - ipOffset;
+                    if ((baseNode as any).startTime !== undefined) {
+                        (baseNode as any).startTime = ((baseNode as any).startTime as number) - ipOffset;
+                    }
+                }
                 baseNode.parentId = rootArtboard.id;
                 rootArtboard.children.push(baseNode.id);
                 if (layer.ind !== undefined) layerIdMap.set(layer.ind, baseNode.id);

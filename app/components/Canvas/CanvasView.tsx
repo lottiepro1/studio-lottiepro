@@ -585,8 +585,7 @@ export default function CanvasView() {
       // must expand the logical handle positions to match, or the resize zone won't align with
       // the visual handles and the rotation zone will fire instead.
       const strokeHalf = ((node.style.strokeAlign ?? 'outside') === 'outside' &&
-        (node.type === 'rect' || node.type === 'ellipse') &&
-        node.type !== 'artboard')
+        (node.type === 'rect' || node.type === 'ellipse'))
         ? (node.style.strokeWidth || 0) / 2
         : 0;
       const hOffsetX = offsetX - strokeHalf;
