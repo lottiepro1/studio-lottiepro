@@ -13,6 +13,9 @@ interface TimelineKeyframeTrackProps {
     isExpanded: boolean;
     propertyGroups: any[];
     onSelect: (nodeId: string, isShift: boolean, isCtrl: boolean) => void;
+    isHovered?: boolean;
+    onHoverChange?: (id: string | null) => void;
+    pickWhipTargetId?: string | null;
 }
 
 const EMPTY_ARRAY: string[] = [];
@@ -24,7 +27,10 @@ const TimelineKeyframeTrack = memo(function TimelineKeyframeTrack({
     pixelsPerFrame,
     isExpanded,
     propertyGroups,
-    onSelect
+    onSelect,
+    isHovered = false,
+    onHoverChange,
+    pickWhipTargetId
 }: TimelineKeyframeTrackProps) {
     const currentTime = useCreatorStore((state) => state.currentTime);
     const selectedKeyframeIds = useCreatorStore((state) => state.selectedKeyframeIds);
@@ -255,15 +261,25 @@ const TimelineKeyframeTrack = memo(function TimelineKeyframeTrack({
         else document.body.style.cursor = 'ew-resize';
     };
 
-    // Track bar: selected = lighter grey, unselected = grey. Keyframe indicator lives on sidebar '+' button.
-    const barBg = isSelected ? '#ACB0B8' : '#808B9D';
+    // Track bar colors: selected = blue (#0A6DC2 matching sidebar), non-selected = dark (#444444 per Figma)
+    const barBg = isSelected ? '#0A6DC2' : '#444444';
 
     return (
-        <div data-track-id={node.id} className="flex flex-col">
+        <div
+            data-track-id={node.id}
+            className="flex flex-col"
+            onMouseEnter={() => onHoverChange?.(node.id)}
+            onMouseLeave={() => onHoverChange?.(null)}
+        >
             {/* Node Main Row - Layer Bar */}
             <div
-                className="relative group/row"
-                style={{ height: rowHeight }}
+                className="relative group/row transition-colors"
+                style={{
+                    height: rowHeight,
+                    background: pickWhipTargetId === node.id ? 'rgba(74,222,128,0.12)' : (isHovered && !isSelected ? 'rgba(255,255,255,0.05)' : undefined),
+                    outline: pickWhipTargetId === node.id ? '1.5px solid rgba(74,222,128,0.5)' : undefined,
+                    outlineOffset: -1,
+                }}
             >
                 {/* Visual bar — spans in-point to out-point */}
                 {depth === 0 && (

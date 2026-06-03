@@ -8,6 +8,7 @@ import { StateMachineSlice } from './stateMachineSlice';
 
 export type CreatorStore = ToolSlice & SceneSlice & SelectionSlice & AnimationSlice & HistorySlice & ClipboardSlice & StateMachineSlice & {
     addNodeToArtboard: (node: SceneNode) => void;
+    addLayerWithShape: (layer: SceneNode, shape: SceneNode) => void;
     groupNodes: (nodeIds: string[]) => void;
     ungroupNodes: (groupId: string) => void;
     fitGroupToContent: (groupId: string) => void;

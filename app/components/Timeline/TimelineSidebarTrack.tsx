@@ -1,9 +1,10 @@
 'use client';
 
-import { useMemo, useState, useEffect, useRef, memo } from 'react';
+import { useMemo, useState, useEffect, useRef, memo, Fragment } from 'react';
 import { createPortal } from 'react-dom';
 import { useCreatorStore } from '@/lib/creator/state/store';
-import { ChevronRight, ChevronDown, Timer, Link2, Box, Circle, Layers, Diamond, Link as LinkIcon, HardDrive, Plus, X, Folder, Image as ImageIcon, Zap, Star, Layout, Component, Square, PenTool, Type, MousePointer2 } from 'lucide-react';
+import { ChevronRight, ChevronDown, X } from 'lucide-react';
+import { Square, Circle, PenNib, TextT, ImageSquare, RectangleDashed as RectDashed, Intersect, SelectionAll, Plus as PlusIcon, BoundingBox, Star as PhStar, Diamond as PhDiamond, LinkSimple as PhLinkSimple } from '@phosphor-icons/react';
 import { AnimationUtils } from '@/lib/creator/core/Animation';
 import { SceneNode } from '@/lib/creator/state/sceneSlice';
 import { getWorldMatrix, decomposeMatrix } from '@/lib/creator/core/Matrix';
@@ -17,6 +18,10 @@ interface TimelineSidebarTrackProps {
     onToggleExpand: () => void;
     onSelect: (isShift: boolean, isCtrl: boolean) => void;
     propertyGroups: any[];
+    onHoverChange: (id: string | null) => void;
+    isHovered?: boolean;
+    onPickWhipStart: (type: 'matte' | 'parent', nodeId: string, x: number, y: number) => void;
+    pickWhipTargetId: string | null;
 }
 
 const EMPTY_ARRAY: string[] = [];
@@ -28,7 +33,11 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
     isExpanded,
     onToggleExpand,
     onSelect,
-    propertyGroups
+    propertyGroups,
+    onHoverChange,
+    isHovered = false,
+    onPickWhipStart,
+    pickWhipTargetId
 }: TimelineSidebarTrackProps) {
     const currentTime = useCreatorStore((state) => state.currentTime);
     const toggleStopwatch = useCreatorStore((state) => state.toggleStopwatch);
@@ -40,6 +49,7 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
     const parentNode = useCreatorStore((state) => node.parentId ? state.nodes.get(node.parentId) : null);
     const updateNode = useCreatorStore((state) => state.updateNode);
     const setEditingNode = useCreatorStore((state) => state.setEditingNode);
+    const setMatte = useCreatorStore((state) => state.setMatte);
     const expandedShapeGroups = useCreatorStore((state) => state.expandedShapeGroups);
     const toggleShapeGroupExpand = useCreatorStore((state) => state.toggleShapeGroupExpand);
     const addKeyframe = useCreatorStore((state) => state.addKeyframe);
@@ -62,6 +72,11 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
     const [parentDropdownOpen, setParentDropdownOpen] = useState(false);
     const [parentDropdownPos, setParentDropdownPos] = useState({ x: 0, y: 0, width: 0 });
     const parentTriggerRef = useRef<HTMLButtonElement>(null);
+    const parentDropdownRef = useRef<HTMLDivElement>(null);
+    const [matteDropdownOpen, setMatteDropdownOpen] = useState(false);
+    const [matteDropdownPos, setMatteDropdownPos] = useState({ x: 0, y: 0 });
+    const matteTriggerRef = useRef<HTMLButtonElement>(null);
+    const matteDropdownRef = useRef<HTMLDivElement>(null);
 
     // Draggable popup logic
     const handleDragStartPopup = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -147,12 +162,24 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
     useEffect(() => {
         if (!parentDropdownOpen) return;
         const close = (e: MouseEvent) => {
-            if (parentTriggerRef.current && parentTriggerRef.current.contains(e.target as Node)) return;
+            if (parentTriggerRef.current?.contains(e.target as Node)) return;
+            if (parentDropdownRef.current?.contains(e.target as Node)) return;
             setParentDropdownOpen(false);
         };
         document.addEventListener('mousedown', close);
         return () => document.removeEventListener('mousedown', close);
     }, [parentDropdownOpen]);
+
+    useEffect(() => {
+        if (!matteDropdownOpen) return;
+        const close = (e: MouseEvent) => {
+            if (matteTriggerRef.current?.contains(e.target as Node)) return;
+            if (matteDropdownRef.current?.contains(e.target as Node)) return;
+            setMatteDropdownOpen(false);
+        };
+        document.addEventListener('mousedown', close);
+        return () => document.removeEventListener('mousedown', close);
+    }, [matteDropdownOpen]);
 
     const isSelected = selectedIds.includes(node.id);
 
@@ -297,33 +324,30 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
     const handleSetParent = (parentId: string | null) => {
         const state = useCreatorStore.getState();
         const targets = isSelected ? selectedIds : [node.id];
-
         const storeNodes = state.nodes;
-        state.pushToHistory(`Parent ${targets.length > 1 ? 'Selected Layers' : node.name} to ${parentId ? storeNodes.get(parentId)?.name : 'None'}`);
 
+        // Pre-compute all transforms before pushToHistory mutates state
+        const updates: Array<{ id: string; update: any }> = [];
         targets.forEach(id => {
             const targetNode = storeNodes.get(id);
             if (!targetNode || id === parentId) return;
 
-            // Calculate relative transform so layer doesn't jump
             const childWorld = getWorldMatrix(id, storeNodes, currentTime);
             const newParentWorld = parentId ? getWorldMatrix(parentId, storeNodes, currentTime) : new DOMMatrix();
-
             const relativeMatrix = newParentWorld.inverse().multiply(childWorld);
             const decomp = decomposeMatrix(relativeMatrix, { x: targetNode.transform.anchorX, y: targetNode.transform.anchorY });
 
-            state.updateNode(id, {
-                parentLayerId: parentId || undefined,
-                transform: {
-                    ...targetNode.transform,
-                    x: decomp.x,
-                    y: decomp.y,
-                    rotation: decomp.rotation,
-                    scaleX: decomp.scaleX,
-                    scaleY: decomp.scaleY
+            updates.push({
+                id,
+                update: {
+                    parentLayerId: parentId || undefined,
+                    transform: { ...targetNode.transform, x: decomp.x, y: decomp.y, rotation: decomp.rotation, scaleX: decomp.scaleX, scaleY: decomp.scaleY }
                 }
             });
         });
+
+        state.pushToHistory(`Parent ${targets.length > 1 ? 'Selected Layers' : node.name} to ${parentId ? storeNodes.get(parentId)?.name : 'None'}`);
+        updates.forEach(({ id, update }) => state.updateNode(id, update));
     };
 
     // Get list of potential parents (excluding self and descendants)
@@ -347,33 +371,29 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
             .sort((a, b) => a.name.localeCompare(b.name));
     }, [node.id, structureChangeCounter]);
 
-    // Design tokens (Figma 2001-1051)
-    const ROW_BG     = isSelected ? 'rgba(221,234,248,0.30)' : dropPosition === 'inside' ? 'rgba(221,234,248,0.20)' : 'rgba(221,234,248,0.08)';
-    const TEXT_COLOR = 'rgba(241,247,254,0.71)';
-    const ICON_COLOR = '#808B9D';
-    const SEL_BG     = 'rgba(0,0,0,0.25)';
-    const SEL_BD     = 'rgba(217,237,255,0.25)';
-    const SEL_TEXT   = 'rgba(229,237,253,0.48)';
+    // Design tokens (Figma 1028329-27036)
+    const ROW_BG     = isSelected ? '#0A6DC2' : dropPosition === 'inside' ? 'rgba(221,234,248,0.12)' : 'transparent';
+    const ICON_COLOR = 'rgba(255,255,255,0.4)';
 
     return (
         <div data-track-id={node.id} className="flex flex-col">
             <div
                 ref={itemRef}
-                draggable={node.type !== 'artboard'}
-                onDragStart={onDragStart}
-                onDragEnd={onDragEnd}
                 onDragOver={onDragOver}
                 onDragLeave={onDragLeave}
                 onDrop={onDrop}
-                className={`flex items-center cursor-default relative${isBlinking ? ' layer-locked-blink' : ' transition-colors'}`}
-                style={{ height: rowHeight, background: isBlinking ? undefined : ROW_BG, borderRadius: 4 }}
+                onMouseEnter={() => onHoverChange(node.id)}
+                onMouseLeave={() => onHoverChange(null)}
+                className={`relative cursor-default group`}
+                style={{ height: rowHeight }}
                 onMouseDownCapture={(e) => {
                     const target = e.target as HTMLElement;
                     if (target.closest('.animate-popup')) return;
+                    // Let buttons receive their own mousedown (pick whip / dropdowns)
+                    const isInteractive = target.closest('button') || target.closest('select') || target.closest('input');
+                    if (isInteractive) return;
                     e.stopPropagation();
                     if (node.locked) { triggerLockBlink(); return; }
-                    const isInteractive = target.closest('button') || target.closest('select') || target.closest('input');
-                    if (isInteractive && isSelected) return;
                     onSelect(e.shiftKey, e.ctrlKey || e.metaKey);
                 }}
             >
@@ -384,143 +404,276 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
                     </div>
                 )}
 
-                {/* Row content */}
+                {/* Row content — fills rowHeight minus 4px (2px top + 2px bottom), matching right-side bar */}
                 <div
-                    className="flex items-center w-full h-full"
-                    style={{ paddingLeft: `${depth * 12 + 12}px`, paddingRight: 4, gap: 12 }}
+                    className={`flex items-center gap-1${isBlinking ? ' layer-locked-blink' : ' transition-colors'}`}
+                    style={{
+                        height: rowHeight - 4,
+                        margin: '2px 0',
+                        paddingLeft: `${depth * 12 + 4}px`,
+                        paddingRight: 0,
+                        borderRadius: 4,
+                        background: isBlinking ? undefined : (isSelected ? '#0A6DC2' : pickWhipTargetId === node.id ? 'rgba(74,222,128,0.15)' : dropPosition === 'inside' ? 'rgba(221,234,248,0.12)' : isHovered ? 'rgba(255,255,255,0.06)' : undefined),
+                        outline: pickWhipTargetId === node.id ? '1.5px solid rgba(74,222,128,0.7)' : undefined,
+                        outlineOffset: -1,
+                    }}
                 >
                     {/* Chevron */}
                     <button
                         onClick={(e) => { e.stopPropagation(); onToggleExpand(); }}
                         className="w-4 h-4 flex items-center justify-center shrink-0 transition-colors"
-                        style={{ color: ICON_COLOR }}
+                        style={{ color: isSelected ? '#FFFFFF' : ICON_COLOR }}
                     >
                         <ChevronRight
-                            size={14}
+                            size={12}
                             strokeWidth={1.75}
                             className={`transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`}
                         />
                     </button>
 
-                    {/* Layer type icon — matches LayerItem.tsx */}
+                    {/* Layer type icon — Phosphor filled icons */}
                     <div
                         className="shrink-0 flex items-center justify-center"
-                        style={{ width: 16, height: 16, color: node.type === 'precomp' ? '#627FE8' : ICON_COLOR }}
+                        style={{ width: 16, height: 16, color: node.type === 'precomp' ? '#627FE8' : (isSelected ? 'rgba(255,255,255,0.9)' : ICON_COLOR) }}
                     >
-                        {node.type === 'rect'    && <Square      size={14} strokeWidth={1.75} />}
-                        {node.type === 'ellipse' && <Circle      size={14} strokeWidth={1.75} />}
-                        {node.type === 'path'    && <PenTool     size={14} strokeWidth={1.75} />}
-                        {node.type === 'text'    && <Type        size={14} strokeWidth={1.75} />}
-                        {node.type === 'image'   && <ImageIcon   size={14} strokeWidth={1.75} />}
-                        {node.type === 'precomp' && <Box         size={14} strokeWidth={1.75} />}
-                        {node.type === 'group'   && (
-                            node.mergeMode && node.mergeMode !== 'none'
-                                ? <span className="text-[9px] font-bold leading-none" style={{ color: '#627FE8' }}>
+                        {node.type === 'rect'     && <Square      size={16} weight="fill" />}
+                        {node.type === 'ellipse'  && <Circle      size={16} weight="fill" />}
+                        {node.type === 'path'     && <PenNib      size={16} weight="fill" />}
+                        {node.type === 'text'     && <TextT       size={16} weight="fill" />}
+                        {node.type === 'image'    && <ImageSquare size={16} weight="fill" />}
+                        {(node.type === 'precomp' || node.type === 'artboard') && <BoundingBox size={16} weight="fill" />}
+                        {node.type === 'group' && (() => {
+                            if (node.mergeMode && node.mergeMode !== 'none') {
+                                return <span className="text-[10px] font-bold leading-none" style={{ color: '#627FE8' }}>
                                     {({ union: '∪', subtract: '−', intersect: '∩', exclude: '⊞' } as any)[node.mergeMode]}
-                                  </span>
-                                : <Folder size={14} strokeWidth={1.75} />
-                        )}
-                        {!['rect','ellipse','path','text','image','precomp','group'].includes(node.type) && <MousePointer2 size={14} strokeWidth={1.75} />}
+                                </span>;
+                            }
+                            if (node.props?.isShapeLayer && node.children?.length) {
+                                const firstChild = useCreatorStore.getState().nodes.get(node.children[0]);
+                                if (firstChild) {
+                                    if (firstChild.type === 'rect')     return <Square   size={16} weight="fill" />;
+                                    if (firstChild.type === 'ellipse')  return <Circle   size={16} weight="fill" />;
+                                    if (firstChild.type === 'path')     return <PenNib   size={16} weight="fill" />;
+                                    if (firstChild.type === 'polystar') return <PhStar   size={16} weight="fill" />;
+                                }
+                            }
+                            return <RectDashed size={16} weight="fill" />;
+                        })()}
+                        {!['rect','ellipse','path','text','image','precomp','group','artboard'].includes(node.type) && <Square size={16} weight="fill" />}
                     </div>
 
-                    {/* Layer name */}
-                    <span className="text-[11px] truncate flex-1 min-w-0" style={{ color: TEXT_COLOR, fontWeight: 400 }}>
+                    {/* Layer name — drag handle for reordering */}
+                    <span
+                        draggable={node.type !== 'artboard'}
+                        onDragStart={onDragStart}
+                        onDragEnd={onDragEnd}
+                        className="text-[12px] truncate flex-1 min-w-0 cursor-grab active:cursor-grabbing"
+                        style={{ color: '#FFFFFF', fontWeight: 450, fontFamily: 'Inter', letterSpacing: '0.005em' }}
+                    >
                         {node.name}
                     </span>
 
-                    {/* Parent / link select (100px, Figma: Select Trigger) — custom dropdown */}
-                    <div className="shrink-0 relative" style={{ width: 100 }}>
-                        <button
-                            ref={parentTriggerRef}
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                if (!parentDropdownOpen) {
-                                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                                    setParentDropdownPos({ x: rect.left, y: rect.bottom + 2, width: rect.width });
-                                }
-                                setParentDropdownOpen(v => !v);
-                            }}
-                            className="flex items-center justify-between w-full h-6 px-2 rounded-[3px] transition-colors hover:opacity-80"
-                            style={{ background: SEL_BG, border: `1px solid ${SEL_BD}` }}
-                        >
-                            <span className="truncate flex-1 text-left" style={{ color: SEL_TEXT, fontSize: 11, lineHeight: '16px' }}>
-                                {node.parentLayerId ? (potentialParents.find(p => p.id === node.parentLayerId)?.name ?? 'None') : 'None'}
-                            </span>
-                            <ChevronDown size={10} style={{ color: SEL_TEXT, flexShrink: 0 }} />
-                        </button>
+                    {/* Divider before action icons — fades in with hover */}
+                    <div
+                        className={`transition-opacity ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                        style={{ width: 2, alignSelf: 'stretch', background: '#2C2C2C', flexShrink: 0 }}
+                    />
 
-                        {parentDropdownOpen && (
-                            <div
-                                className="fixed z-[9999] rounded-[6px] overflow-hidden py-1"
-                                style={{
-                                    left: parentDropdownPos.x,
-                                    top: parentDropdownPos.y,
-                                    minWidth: parentDropdownPos.width,
-                                    maxWidth: 200,
-                                    maxHeight: 240,
-                                    overflowY: 'auto',
-                                    background: '#27292C',
-                                    border: '1px solid rgba(221,234,248,0.08)',
-                                    boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                    {/* Action icons */}
+                    <div className="flex items-center shrink-0">
+                        {/* Matte + Parent — hover-only for non-selected, always visible for selected */}
+                        <div className={`flex items-center transition-opacity ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                            {/* Matte (Intersect) — click opens dropdown, drag starts pick whip */}
+                            <button
+                                ref={matteTriggerRef}
+                                onMouseDown={(e) => {
+                                    e.stopPropagation();
+                                    const startX = e.clientX; const startY = e.clientY;
+                                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                                    const cx = rect.left + rect.width / 2; const cy = rect.top + rect.height / 2;
+                                    let dragged = false;
+                                    const onMove = (me: MouseEvent) => {
+                                        if (!dragged && (Math.abs(me.clientX - startX) > 5 || Math.abs(me.clientY - startY) > 5)) {
+                                            dragged = true;
+                                            onPickWhipStart('matte', node.id, cx, cy);
+                                            window.removeEventListener('mousemove', onMove);
+                                            window.removeEventListener('mouseup', onUp);
+                                        }
+                                    };
+                                    const onUp = () => {
+                                        window.removeEventListener('mousemove', onMove);
+                                        window.removeEventListener('mouseup', onUp);
+                                        if (!dragged) {
+                                            if (!matteDropdownOpen) setMatteDropdownPos({ x: rect.left, y: rect.bottom + 2 });
+                                            setMatteDropdownOpen(v => !v);
+                                        }
+                                    };
+                                    window.addEventListener('mousemove', onMove);
+                                    window.addEventListener('mouseup', onUp);
                                 }}
-                                onMouseDown={(e) => e.stopPropagation()}
+                                className="w-6 h-6 flex items-center justify-center rounded transition-colors hover:bg-white/10"
+                                style={{ color: node.matteSourceId ? '#FFFFFF' : ICON_COLOR }}
+                                title="Set Matte — click to pick from list, drag to layer"
                             >
-                                {[{ id: '', name: 'None' }, ...potentialParents].map(p => {
-                                    const isActive = (node.parentLayerId || '') === p.id;
-                                    return (
-                                        <button
-                                            key={p.id}
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                handleSetParent(p.id || null);
-                                                setParentDropdownOpen(false);
-                                            }}
-                                            className="w-full text-left px-3 py-1.5 text-[11px] transition-colors hover:bg-white/10"
-                                            style={{ color: isActive ? 'var(--accent)' : 'rgba(241,247,254,0.71)' }}
-                                        >
-                                            {p.name}
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        )}
+                                <Intersect size={16} weight="fill" />
+                            </button>
+
+                            {/* Divider between Intersect and SelectionAll */}
+                            <div style={{ width: 2, alignSelf: 'stretch', background: '#2C2C2C', flexShrink: 0 }} />
+
+                            {/* Parent layer (SelectionAll) — click opens dropdown, drag starts pick whip */}
+                            <button
+                                ref={parentTriggerRef}
+                                onMouseDown={(e) => {
+                                    e.stopPropagation();
+                                    const startX = e.clientX; const startY = e.clientY;
+                                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                                    const cx = rect.left + rect.width / 2; const cy = rect.top + rect.height / 2;
+                                    let dragged = false;
+                                    const onMove = (me: MouseEvent) => {
+                                        if (!dragged && (Math.abs(me.clientX - startX) > 5 || Math.abs(me.clientY - startY) > 5)) {
+                                            dragged = true;
+                                            onPickWhipStart('parent', node.id, cx, cy);
+                                            window.removeEventListener('mousemove', onMove);
+                                            window.removeEventListener('mouseup', onUp);
+                                        }
+                                    };
+                                    const onUp = () => {
+                                        window.removeEventListener('mousemove', onMove);
+                                        window.removeEventListener('mouseup', onUp);
+                                        if (!dragged) {
+                                            if (!parentDropdownOpen) setParentDropdownPos({ x: rect.left, y: rect.bottom + 2, width: rect.width });
+                                            setParentDropdownOpen(v => !v);
+                                        }
+                                    };
+                                    window.addEventListener('mousemove', onMove);
+                                    window.addEventListener('mouseup', onUp);
+                                }}
+                                className="w-6 h-6 flex items-center justify-center rounded transition-colors hover:bg-white/10"
+                                style={{ color: node.parentLayerId ? '#FFFFFF' : ICON_COLOR }}
+                                title="Set Parent — click to pick from list, drag to layer"
+                            >
+                                <SelectionAll size={16} weight="fill" />
+                            </button>
+                        </div>
+
+                        {/* Divider between SelectionAll and Plus — fades in with hover */}
+                        <div
+                            className={`transition-opacity ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                            style={{ width: 2, alignSelf: 'stretch', background: '#2C2C2C', flexShrink: 0 }}
+                        />
+
+                        {/* Keyframe (Plus) — always visible */}
+                        {(() => {
+                            const hasAnimations = !!node.animations && Object.values(node.animations).some((arr: any) => arr && arr.length > 0);
+                            const isActive = isAnimateMenuOpen || hasAnimations;
+                            return (
+                                <button
+                                    data-animate-trigger="true"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (!isAnimateMenuOpen) {
+                                            const rect = e.currentTarget.getBoundingClientRect();
+                                            const menuWidth = 192;
+                                            let x = rect.right + 10;
+                                            let y = rect.top - 10;
+                                            if (x + menuWidth > window.innerWidth) x = rect.left - menuWidth - 10;
+                                            if (y + 400 > window.innerHeight) y = Math.max(10, window.innerHeight - 410);
+                                            setAnimateMenuPos({ x, y });
+                                            setIsAnimateMenuOpen(true);
+                                            setIsAnimateMoreOpen(false);
+                                        } else {
+                                            setIsAnimateMenuOpen(false);
+                                        }
+                                    }}
+                                    className="w-6 h-6 flex items-center justify-center rounded transition-colors hover:bg-white/10"
+                                    style={{
+                                        color: isActive ? '#FFFFFF' : ICON_COLOR,
+                                        background: isActive ? 'rgba(255,255,255,0.1)' : 'transparent',
+                                    }}
+                                    title="Add Keyframe"
+                                >
+                                    <PlusIcon size={16} weight="fill" />
+                                </button>
+                            );
+                        })()}
                     </div>
 
-                    {/* Animate / keyframe button (+) — accent when layer has any keyframes */}
-                    {(() => {
-                        const hasAnimations = !!node.animations && Object.values(node.animations).some((arr: any) => arr && arr.length > 0);
-                        const isActive = isAnimateMenuOpen || hasAnimations;
-                        return (
-                            <button
-                                data-animate-trigger="true"
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (!isAnimateMenuOpen) {
-                                        const rect = e.currentTarget.getBoundingClientRect();
-                                        const menuWidth = 192;
-                                        let x = rect.right + 10;
-                                        let y = rect.top - 10;
-                                        if (x + menuWidth > window.innerWidth) x = rect.left - menuWidth - 10;
-                                        if (y + 400 > window.innerHeight) y = Math.max(10, window.innerHeight - 410);
-                                        setAnimateMenuPos({ x, y });
-                                        setIsAnimateMenuOpen(true);
-                                        setIsAnimateMoreOpen(false);
-                                    } else {
-                                        setIsAnimateMenuOpen(false);
-                                    }
-                                }}
-                                className="w-6 h-6 flex items-center justify-center rounded transition-colors shrink-0"
-                                style={{
-                                    color: isActive ? 'var(--accent)' : ICON_COLOR,
-                                    background: isActive ? 'rgba(var(--accent-rgb),0.15)' : 'transparent',
-                                    border: hasAnimations && !isAnimateMenuOpen ? '1px solid rgba(var(--accent-rgb),0.35)' : '1px solid transparent',
-                                }}
-                                title="Animate Properties"
-                            >
-                                <Plus size={14} strokeWidth={2} />
-                            </button>
-                        );
-                    })()}
+                    {/* Parent layer dropdown (fixed position) */}
+                    {parentDropdownOpen && (
+                        <div
+                            ref={parentDropdownRef}
+                            className="fixed z-[9999] rounded-[6px] overflow-hidden py-1"
+                            style={{
+                                left: parentDropdownPos.x,
+                                top: parentDropdownPos.y,
+                                minWidth: 160,
+                                maxWidth: 200,
+                                maxHeight: 240,
+                                overflowY: 'auto',
+                                background: '#27292C',
+                                border: '1px solid rgba(221,234,248,0.08)',
+                                boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                            }}
+                            onMouseDown={(e) => e.stopPropagation()}
+                        >
+                            {[{ id: '', name: 'None' }, ...potentialParents].map(p => {
+                                const isActive = (node.parentLayerId || '') === p.id;
+                                return (
+                                    <button
+                                        key={p.id}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleSetParent(p.id || null);
+                                            setParentDropdownOpen(false);
+                                        }}
+                                        className="w-full text-left px-3 py-1.5 text-[11px] transition-colors hover:bg-white/10"
+                                        style={{ color: isActive ? 'var(--accent)' : 'rgba(241,247,254,0.71)' }}
+                                    >
+                                        {p.name}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
+
+                    {/* Matte dropdown (fixed position) */}
+                    {matteDropdownOpen && (
+                        <div
+                            ref={matteDropdownRef}
+                            className="fixed z-[9999] rounded-[6px] overflow-hidden py-1"
+                            style={{
+                                left: matteDropdownPos.x,
+                                top: matteDropdownPos.y,
+                                minWidth: 160,
+                                maxWidth: 200,
+                                maxHeight: 240,
+                                overflowY: 'auto',
+                                background: '#27292C',
+                                border: '1px solid rgba(221,234,248,0.08)',
+                                boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                            }}
+                            onMouseDown={(e) => e.stopPropagation()}
+                        >
+                            {[{ id: '', name: 'None' }, ...potentialParents].map(p => {
+                                const isActive = (node.matteSourceId || '') === p.id;
+                                return (
+                                    <button
+                                        key={p.id}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setMatte(node.id, p.id || null);
+                                            setMatteDropdownOpen(false);
+                                        }}
+                                        className="w-full text-left px-3 py-1.5 text-[11px] transition-colors hover:bg-white/10"
+                                        style={{ color: isActive ? 'var(--accent)' : 'rgba(241,247,254,0.71)' }}
+                                    >
+                                        {p.name}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
                 </div>
 
                 {/* Animate Properties Popover — rendered via portal so it escapes the
@@ -648,7 +801,7 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
                                         >
                                             <span className="text-[11px] font-medium tracking-wide">{group.label}</span>
                                             {isAnimated && (
-                                                <Diamond size={10} className="text-accent opacity-60" fill="currentColor" />
+                                                <PhDiamond size={10} weight="fill" className="text-accent opacity-60" />
                                             )}
                                         </button>
                                     );
@@ -698,9 +851,15 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
                         return groups.filter(group => group.props.some((p: any) => !!node.animations?.[p.path]));
                     };
 
-                    // Categorize groups (only show animated ones by default)
-                    const coreGroups = getAnimatedGroups(visibleGroups).filter(g => ['Position', 'Scale', 'Rotation', 'Opacity'].includes(g.label));
-                    const shapeGroups = getAnimatedGroups(adaptedGroups).filter(g => !['Position', 'Scale', 'Rotation', 'Opacity'].includes(g.label));
+                    const CORE_LABELS = ['Position', 'Scale', 'Rotation', 'Opacity'];
+                    const isMainGroup = node.type === 'group' && parentNode?.type === 'artboard';
+
+                    // Main groups always show core transform properties when expanded,
+                    // regardless of whether they have keyframes yet.
+                    const coreGroups = (isMainGroup && isExpanded)
+                        ? adaptedGroups.filter(g => CORE_LABELS.includes(g.label))
+                        : getAnimatedGroups(visibleGroups).filter(g => CORE_LABELS.includes(g.label));
+                    const shapeGroups = getAnimatedGroups(adaptedGroups).filter(g => !CORE_LABELS.includes(g.label));
 
                     const isShapeGroupExpanded = expandedShapeGroups[node.id];
 
@@ -712,57 +871,96 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
                         return (
                             <div
                                 key={group.mainPath}
-                                className="flex items-center transition-colors"
-                                style={{ height: rowHeight, paddingLeft: `${depth * 12 + 40}px`, paddingRight: 8, background: 'rgba(221,234,248,0.04)', borderRadius: 4 }}
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    height: 32,
+                                    paddingLeft: `${depth * 12 + 22}px`,
+                                    background: '#383838',
+                                    borderBottom: '1px solid #2C2C2C',
+                                    overflow: 'hidden',
+                                }}
                             >
-                                <button
-                                    onClick={() => {
-                                        const anyKfAtTime = group.props.some((p: any) =>
-                                            (node.animations?.[p.path] || []).some((kf: any) => kf.time === currentTime)
-                                        );
+                                {/* Left: diamond button + label */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                                    <button
+                                        onClick={() => {
+                                            const anyKfAtTime = group.props.some((p: any) =>
+                                                (node.animations?.[p.path] || []).some((kf: any) => kf.time === currentTime)
+                                            );
+                                            group.props.forEach((p: any) => {
+                                                const hasKf = (node.animations?.[p.path] || []).some((kf: any) => kf.time === currentTime);
+                                                if (anyKfAtTime) {
+                                                    if (hasKf) toggleStopwatch(node.id, p.path);
+                                                } else {
+                                                    toggleStopwatch(node.id, p.path);
+                                                }
+                                            });
+                                        }}
+                                        style={{ display: 'flex', alignItems: 'center', padding: 2, flexShrink: 0 }}
+                                    >
+                                        <PhDiamond
+                                            size={10}
+                                            weight={hasKfAtCurrentTime ? 'fill' : 'regular'}
+                                            color={isAnimated ? '#FFFFFF' : 'rgba(255,255,255,0.25)'}
+                                        />
+                                    </button>
+                                    <span style={{
+                                        fontSize: 11, fontWeight: 450, fontFamily: 'Inter',
+                                        color: '#FFFFFF', letterSpacing: '0.055em',
+                                        userSelect: 'none', whiteSpace: 'nowrap',
+                                    }}>
+                                        {group.label}
+                                    </span>
+                                </div>
 
-                                        group.props.forEach((p: any) => {
-                                            const hasKf = (node.animations?.[p.path] || []).some((kf: any) => kf.time === currentTime);
-                                            if (anyKfAtTime) {
-                                                if (hasKf) toggleStopwatch(node.id, p.path);
-                                            } else {
-                                                toggleStopwatch(node.id, p.path);
-                                            }
-                                        });
-                                    }}
-                                    className={`p-1 mr-2 rounded-sm transition-all ${isAnimated ? 'text-accent opacity-100' : 'text-white/10 hover:text-white/30'}`}
-                                >
-                                    <Diamond size={10} fill={hasKfAtCurrentTime ? "currentColor" : "none"} className={hasKfAtCurrentTime ? "" : ""} />
-                                </button>
-                                <div className="flex-1 flex items-center justify-between min-w-0">
-                                    <span className="text-[11px] font-medium truncate" style={{ color: 'rgba(241,247,254,0.40)' }}>{group.label}</span>
-                                    <div className="flex items-center gap-2 ml-2 shrink-0">
-                                        {group.hasLink && (
-                                            <button
-                                                onClick={() => setNodeProperty(node.id, 'transform.scaleLink', !node.transform.scaleLink)}
-                                                className={`p-0.5 rounded transition-colors ${node.transform.scaleLink ? 'text-accent bg-accent/15' : 'text-white/10 hover:text-white/30 hover:bg-white/5'}`}
-                                            >
-                                                <Link2 size={10} />
-                                            </button>
-                                        )}
-                                        <div className="flex items-center gap-1.5">
-                                            {group.props.map((p: any, i: number) => (
-                                                <PropertyInput
-                                                    key={p.path}
-                                                    nodeId={node.id}
-                                                    propertyPath={p.path}
-                                                    value={AnimationUtils.getPropertyValue(node, p.path, currentTime)}
-                                                    isPercent={p.isPercent}
-                                                    isDegree={p.isDegree}
-                                                    displayFactor={p.displayFactor}
-                                                    setNodeProperty={setNodeProperty}
-                                                    showSeparator={i > 0}
-                                                    min={p.min}
-                                                    max={p.max}
-                                                />
-                                            ))}
-                                        </div>
-                                    </div>
+                                {/* Right: structured input area with 1px separators */}
+                                <div style={{ display: 'flex', alignSelf: 'stretch', alignItems: 'stretch', flexShrink: 0 }}>
+                                    {/* Leading separator */}
+                                    <div style={{ width: 1, background: '#2C2C2C', flexShrink: 0 }} />
+
+                                    {group.props.map((p: any, i: number) => (
+                                        <Fragment key={p.path}>
+                                            {i > 0 && (
+                                                group.hasLink ? (
+                                                    /* Scale/Size chain-link separator — click to toggle link */
+                                                    <button
+                                                        onClick={() => setNodeProperty(node.id, 'transform.scaleLink', !node.transform.scaleLink)}
+                                                        style={{
+                                                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                            padding: '0 5px',
+                                                            borderLeft: '1px solid #2C2C2C',
+                                                            borderRight: '1px solid #2C2C2C',
+                                                            background: 'transparent',
+                                                            cursor: 'pointer',
+                                                            flexShrink: 0,
+                                                        }}
+                                                    >
+                                                        <PhLinkSimple
+                                                            size={10}
+                                                            color={node.transform.scaleLink ? '#FFFFFF' : 'rgba(255,255,255,0.3)'}
+                                                        />
+                                                    </button>
+                                                ) : (
+                                                    /* Regular 1px separator */
+                                                    <div style={{ width: 1, background: '#2C2C2C', flexShrink: 0 }} />
+                                                )
+                                            )}
+                                            <PropertyInput
+                                                nodeId={node.id}
+                                                propertyPath={p.path}
+                                                propLabel={p.label}
+                                                value={AnimationUtils.getPropertyValue(node, p.path, currentTime)}
+                                                isPercent={p.isPercent}
+                                                isDegree={p.isDegree}
+                                                displayFactor={p.displayFactor || 1}
+                                                setNodeProperty={setNodeProperty}
+                                                min={p.min}
+                                                max={p.max}
+                                            />
+                                        </Fragment>
+                                    ))}
                                 </div>
                             </div>
                         );
@@ -783,14 +981,14 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
                             {shapeGroups.length > 0 && (
                                 <>
                                     <div
-                                        className="flex items-center cursor-pointer transition-colors rounded"
-                                        style={{ height: rowHeight, paddingLeft: `${depth * 12 + 24}px`, paddingRight: 8, background: 'rgba(221,234,248,0.04)' }}
+                                        className="flex items-center cursor-pointer"
+                                        style={{ height: 32, paddingLeft: `${depth * 12 + 22}px`, paddingRight: 8, background: '#383838', borderBottom: '1px solid #2C2C2C' }}
                                         onClick={() => toggleShapeGroupExpand(node.id)}
                                     >
-                                        <button className="p-1 mr-1 transition-colors" style={{ color: 'rgba(241,247,254,0.30)' }}>
+                                        <button className="p-1 mr-1" style={{ color: 'rgba(255,255,255,0.30)' }}>
                                             <ChevronRight size={12} strokeWidth={1.75} className={`transition-transform duration-150 ${isShapeGroupExpanded ? 'rotate-90' : ''}`} />
                                         </button>
-                                        <span className="text-[11px] font-medium" style={{ color: 'rgba(241,247,254,0.40)' }}>Transform Shape</span>
+                                        <span style={{ fontSize: 11, fontWeight: 450, fontFamily: 'Inter', color: 'rgba(255,255,255,0.40)' }}>Transform Shape</span>
                                     </div>
                                     {isShapeGroupExpanded && shapeGroups.map(renderGroupRow)}
                                 </>
@@ -805,23 +1003,26 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
 
 export default TimelineSidebarTrack;
 
-function PropertyInput({ nodeId, propertyPath, value, isPercent, isDegree, displayFactor = 1, setNodeProperty, showSeparator, min, max }: any) {
+function PropertyInput({ nodeId, propertyPath, propLabel, value, isPercent, isDegree, displayFactor = 1, setNodeProperty, min, max }: any) {
     const [isEditing, setIsEditing] = useState(false);
-    const [localVal, setLocalVal] = useState("");
+    const [localVal, setLocalVal] = useState('');
     const inputRef = useRef<HTMLInputElement>(null);
 
-    let displayVal: any = "-";
+    // Show the prop label (e.g. "X", "Y") only for non-percent non-degree props (i.e. Position)
+    const showPropLabel = !isPercent && !isDegree;
+    const suffix = isPercent ? '%' : isDegree ? '°' : '';
+
+    let displayVal: any = '-';
     if (typeof value === 'number' && !isNaN(value)) {
         displayVal = Math.round(value * displayFactor * 100) / 100;
         if (isPercent) displayVal = Math.round(value * 100);
     } else if (Array.isArray(value)) {
         displayVal = `[${value.length}]`;
     } else if (value === null || value === undefined) {
-        displayVal = "-";
+        displayVal = '-';
     } else {
-        // Handle any weird stuff that stringifies to NaN
         const str = String(value);
-        displayVal = str === "NaN" ? "-" : str;
+        displayVal = str === 'NaN' ? '-' : str;
     }
 
     const startEditing = () => {
@@ -835,14 +1036,14 @@ function PropertyInput({ nodeId, propertyPath, value, isPercent, isDegree, displ
         if (!isNaN(next)) {
             let finalVal = next / displayFactor;
             if (isPercent) finalVal = next / 100;
-
             const clamped = Math.max(min ?? -Infinity, Math.min(max ?? Infinity, finalVal));
             setNodeProperty(nodeId, propertyPath, clamped);
         }
     };
 
     const handleMouseDown = (e: React.MouseEvent) => {
-        if (e.button !== 0) return; // Only left click
+        if (e.button !== 0) return;
+        e.preventDefault();
 
         const startX = e.clientX;
         const startValue = value;
@@ -851,15 +1052,11 @@ function PropertyInput({ nodeId, propertyPath, value, isPercent, isDegree, displ
         const onMouseMove = (moveE: MouseEvent) => {
             const dx = moveE.clientX - startX;
             if (Math.abs(dx) > 3) moved = true;
-
             if (moved) {
-                // Determine sensitivity
                 let sensitivity = 1 / displayFactor;
                 if (isPercent) sensitivity = 0.01;
-
                 if (moveE.shiftKey) sensitivity *= 10;
                 if (moveE.altKey) sensitivity /= 10;
-
                 const newValue = startValue + dx * sensitivity;
                 const clamped = Math.max(min ?? -Infinity, Math.min(max ?? Infinity, newValue));
                 setNodeProperty(nodeId, propertyPath, clamped);
@@ -867,9 +1064,7 @@ function PropertyInput({ nodeId, propertyPath, value, isPercent, isDegree, displ
         };
 
         const onMouseUp = () => {
-            if (!moved) {
-                startEditing();
-            }
+            if (!moved) startEditing();
             window.removeEventListener('mousemove', onMouseMove);
             window.removeEventListener('mouseup', onMouseUp);
             document.body.style.cursor = 'default';
@@ -879,6 +1074,7 @@ function PropertyInput({ nodeId, propertyPath, value, isPercent, isDegree, displ
         window.addEventListener('mouseup', onMouseUp);
         document.body.style.cursor = 'ew-resize';
     };
+
     useEffect(() => {
         if (isEditing && inputRef.current) {
             inputRef.current.focus();
@@ -887,14 +1083,35 @@ function PropertyInput({ nodeId, propertyPath, value, isPercent, isDegree, displ
     }, [isEditing]);
 
     return (
-        <div className="flex items-center">
-            {showSeparator && <span className="text-white/5 mr-1.5 text-[8px] font-bold">,</span>}
+        <div
+            style={{
+                display: 'flex', alignItems: 'center',
+                height: '100%', padding: '0 8px',
+                minWidth: showPropLabel ? 54 : 42,
+                cursor: isEditing ? 'text' : 'ew-resize',
+                userSelect: 'none',
+            }}
+            onMouseDown={isEditing ? undefined : handleMouseDown}
+        >
+            {showPropLabel && (
+                <span style={{
+                    color: 'rgba(255,255,255,0.7)',
+                    fontSize: 11, fontWeight: 500, fontFamily: 'Inter',
+                    marginRight: 5, userSelect: 'none', flexShrink: 0,
+                }}>
+                    {propLabel}
+                </span>
+            )}
             {isEditing ? (
                 <input
                     ref={inputRef}
                     type="text"
-                    className="w-12 text-white font-mono text-[10px] font-medium text-center rounded outline-none"
-                    style={{ background: 'var(--accent)' }}
+                    style={{
+                        width: 36, background: 'rgba(59,130,246,0.25)',
+                        color: '#FFFFFF', fontSize: 11, fontWeight: 450,
+                        fontFamily: 'Inter', border: 'none', outline: 'none',
+                        borderRadius: 3, padding: '0 2px',
+                    }}
                     value={localVal}
                     onChange={(e) => setLocalVal(e.target.value)}
                     onBlur={commitChange}
@@ -904,11 +1121,11 @@ function PropertyInput({ nodeId, propertyPath, value, isPercent, isDegree, displ
                     }}
                 />
             ) : (
-                <span
-                    onMouseDown={handleMouseDown}
-                    className="text-[10px] font-mono font-bold text-accent/80 hover:text-accent transition-colors bg-accent/15 px-1 rounded-sm cursor-ew-resize border border-transparent hover:border-accent/20 select-none"
-                >
-                    {displayVal}{isPercent ? '%' : isDegree ? '°' : ''}
+                <span style={{
+                    color: '#FFFFFF', fontSize: 11, fontWeight: 450,
+                    fontFamily: 'Inter', userSelect: 'none', whiteSpace: 'nowrap',
+                }}>
+                    {displayVal}{suffix}
                 </span>
             )}
         </div>

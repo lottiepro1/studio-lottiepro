@@ -45,6 +45,7 @@ export default function InspectorPanel() {
   const [editingHex, setEditingHex] = useState<string | null>(null);
   const [showBlendMode, setShowBlendMode] = useState(false);
   const [showMatte, setShowMatte] = useState(false);
+  const [showFpsMenu, setShowFpsMenu] = useState(false);
 
   // Get current active artboard or fallback to first one
   const artboard = activeArtboardId ? nodes.get(activeArtboardId) : Array.from(nodes.values()).find(n => n.type === 'artboard');
@@ -676,23 +677,7 @@ export default function InspectorPanel() {
   const isOnlyPrimitivesSelected = false;
 
   return (
-    <div className="w-80 h-full flex flex-col overflow-y-auto custom-scrollbar select-none pb-12 min-h-0" style={{ background: '#18191B' }}>
-      {/* Header - Solid background for visual consistency */}
-      <div className="h-10 px-3 flex items-center justify-between shrink-0 sticky top-0 z-20" style={{ background: '#18191B', borderBottom: '1px solid rgba(221,234,248,0.08)' }}>
-        <div className="flex flex-col">
-          <h2 className="text-xs font-medium text-secondary">{selectedKeyframeIds.length > 0 ? 'Animation' : 'Properties'}</h2>
-          {selectedNode && (
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] font-bold text-white/80 tracking-tight">{selectedNode.name}</span>
-            </div>
-          )}
-        </div>
-        {selectedNode && (
-          <div className={`w-6 h-6 rounded-md flex items-center justify-center bg-white/5 border border-[rgba(221,234,248,0.08)] text-white/40 text-[10px]`}>
-            {selectedNode.type === 'rect' ? '■' : selectedNode.type === 'ellipse' ? '●' : selectedNode.type === 'artboard' ? '回' : selectedNode.type === 'text' ? 'T' : '⦽'}
-          </div>
-        )}
-      </div>
+    <div className="w-full h-full flex flex-col overflow-y-auto custom-scrollbar select-none pb-12 min-h-0" style={{ background: '#2C2C2C' }}>
 
       {/* Alignment Bar */}
       {selectedIds.length > 0 && isRectOrEllipseOrPath && (
@@ -1701,179 +1686,210 @@ export default function InspectorPanel() {
         const duration = targetNode.props.duration || (fps * 5);
 
         const matchedPreset = PRESETS.find(p => p.w === w && p.h === h);
-        const presetLabel = matchedPreset ? matchedPreset.label : `Custom: ${w} × ${h}`;
+        const presetLabel = matchedPreset ? matchedPreset.label : 'Custom Size';
 
         const bgColor = targetNode.props.backgroundColor || '#FFFFFF';
         const isTransparent = !!targetNode.props.transparent;
         const displayHex = isTransparent ? 'Transparent' : bgColor.replace('#', '').toUpperCase();
 
+        const AB_FONT: React.CSSProperties = { fontFamily: 'Inter, sans-serif', fontWeight: 450, fontSize: 12, color: '#FFFFFF', letterSpacing: '0.04em' };
+        const AB_LABEL: React.CSSProperties = { fontFamily: 'Inter, sans-serif', fontWeight: 500, fontSize: 12, color: 'rgba(255,255,255,0.7)' };
+        const AB_FIELD: React.CSSProperties = { height: 34, background: '#383838', borderRadius: 6 };
+        const AB_DROPDOWN: React.CSSProperties = { height: 34, background: '#2C2C2C', border: '1px solid #444444', borderRadius: 6, paddingLeft: 10 };
+        const AB_ROW: React.CSSProperties = { padding: '5px 10px' };
+
         return (
-          <div className="flex flex-col gap-3 p-3">
-            {/* Name */}
-            <div
-              className="h-7 px-2 flex items-center justify-center rounded-[3px]"
-              style={{ background: 'rgba(211,237,248,0.11)' }}
-            >
-              <input
-                type="text"
-                value={targetNode.name || 'New File'}
-                onChange={e => updateNode(targetId, { name: e.target.value })}
-                className="bg-transparent outline-none text-[14px] text-center w-full"
-                style={{ color: '#EDEEF0', fontWeight: 400 }}
-              />
-            </div>
+          <div className="flex flex-col flex-1" style={{ background: '#2C2C2C' }}>
 
-            {/* Preset selector */}
-            <div className="relative">
-              <button
-                onClick={() => setShowPresets(v => !v)}
-                className="w-full h-8 flex items-center justify-between rounded-[4px]"
-                style={{
-                  background: 'rgba(0,0,0,0.25)',
-                  border: '1px solid rgba(217,237,255,0.25)',
-                  padding: '0 12px',
-                }}
-              >
-                <span className="text-[14px] truncate text-left" style={{ color: 'rgba(229,237,253,0.48)', fontWeight: 400 }}>
-                  {presetLabel}
-                </span>
-                <ChevronDown size={16} style={{ color: 'rgba(229,237,253,0.48)', flexShrink: 0, marginLeft: 8 }} />
-              </button>
-              {showPresets && (
-                <>
-                  <div className="fixed inset-0 z-[99]" onClick={() => setShowPresets(false)} />
-                  <div
-                    className="absolute top-full left-0 right-0 mt-1 z-[100] rounded-[4px] overflow-hidden"
-                    style={{ background: '#27292C', border: '1px solid rgba(221,234,248,0.08)', boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}
-                  >
-                    {PRESETS.map(p => (
-                      <button
-                        key={p.label}
-                        className="w-full text-left px-3 py-2 text-[13px] hover:bg-white/5 transition-colors"
-                        style={{ color: '#EDEEF0' }}
-                        onClick={() => {
-                          setNodeProperties(targetId, { 'props.width': p.w, 'props.height': p.h });
-                          setShowPresets(false);
-                        }}
-                      >
-                        {p.label}
-                      </button>
-                    ))}
+            {/* Content rows */}
+            <div style={{ padding: '8px 0' }}>
+
+              {/* Row: Background color */}
+              <div style={AB_ROW}>
+                <div className="flex items-center justify-between" style={AB_FIELD}>
+                  {/* Swatch + hex */}
+                  <div className="flex items-center flex-1 min-w-0">
+                    <div className="flex items-center justify-center shrink-0" style={{ width: 34, height: 34 }}>
+                      <div className="relative overflow-hidden" style={{
+                        width: 18, height: 18, borderRadius: 3,
+                        border: '1px solid rgba(255,255,255,0.15)',
+                        background: isTransparent
+                          ? 'repeating-conic-gradient(#666 0% 25%, #999 0% 50%) 0 0 / 6px 6px'
+                          : bgColor,
+                      }}>
+                        {!isTransparent && (
+                          <input
+                            type="color"
+                            value={bgColor.length === 7 ? bgColor : '#FFFFFF'}
+                            onChange={e => setNodeProperty(targetId, 'props.backgroundColor', e.target.value, { recordHistory: true })}
+                            className="absolute border-none cursor-pointer opacity-0"
+                            style={{ inset: '-4px', width: 'calc(100% + 8px)', height: 'calc(100% + 8px)' }}
+                          />
+                        )}
+                      </div>
+                    </div>
+                    <input
+                      type="text"
+                      value={editingHex !== null ? editingHex : displayHex}
+                      readOnly={isTransparent}
+                      onFocus={e => {
+                        if (!isTransparent) {
+                          setEditingHex(bgColor.replace('#', '').toUpperCase());
+                          requestAnimationFrame(() => e.target.select());
+                        }
+                      }}
+                      onChange={e => {
+                        if (isTransparent) return;
+                        setEditingHex(e.target.value);
+                        const parsed = parseColorInput(e.target.value);
+                        if (parsed) setNodeProperty(targetId, 'props.backgroundColor', parsed, { recordHistory: false });
+                      }}
+                      onBlur={e => {
+                        const parsed = parseColorInput(e.target.value);
+                        if (parsed) setNodeProperty(targetId, 'props.backgroundColor', parsed, { recordHistory: true });
+                        setEditingHex(null);
+                      }}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                        if (e.key === 'Escape') { setEditingHex(null); (e.target as HTMLInputElement).blur(); }
+                      }}
+                      className="bg-transparent outline-none flex-1 min-w-0 truncate"
+                      style={AB_FONT}
+                    />
                   </div>
-                </>
-              )}
-            </div>
+                  {/* Visibility toggle */}
+                  <button
+                    onClick={() => setNodeProperty(targetId, 'props.transparent', !isTransparent)}
+                    className="flex items-center justify-center shrink-0 transition-colors"
+                    style={{ padding: '0 8px', height: '100%', borderLeft: '2px solid #2C2C2C', color: isTransparent ? '#FFFFFF' : 'rgba(255,255,255,0.5)' }}
+                    title={isTransparent ? 'Show background' : 'Transparent background'}
+                  >
+                    {isTransparent
+                      ? <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="m10.79 12.912-1.614-1.615a3.5 3.5 0 0 1-4.474-4.474l-2.06-2.06C.938 6.278 0 8 0 8s3 5.5 8 5.5a7 7 0 0 0 2.79-.588M5.21 3.088A7 7 0 0 1 8 2.5c5 0 8 5.5 8 5.5s-.939 1.721-2.641 3.238l-2.062-2.062a3.5 3.5 0 0 0-4.474-4.474z"/><path d="M5.525 7.646a2.5 2.5 0 0 0 2.829 2.829zm4.95.708-2.829-2.83a2.5 2.5 0 0 1 2.829 2.829zm3.171 6-12-12 .708-.708 12 12z"/></svg>
+                      : <svg width="18" height="18" viewBox="6 6 18 12" fill="currentColor"><path d="M21.5248 11.8228C21.5056 11.7796 21.0424 10.752 20.0127 9.72227C18.6405 8.35016 16.9075 7.625 15 7.625C13.0925 7.625 11.3594 8.35016 9.98734 9.72227C8.95757 10.752 8.49218 11.7812 8.47523 11.8228C8.45035 11.8788 8.4375 11.9393 8.4375 12.0005C8.4375 12.0618 8.45035 12.1223 8.47523 12.1783C8.49437 12.2215 8.95757 13.2485 9.98734 14.2783C11.3594 15.6498 13.0925 16.375 15 16.375C16.9075 16.375 18.6405 15.6498 20.0127 14.2783C21.0424 13.2485 21.5056 12.2215 21.5248 12.1783C21.5496 12.1223 21.5625 12.0618 21.5625 12.0005C21.5625 11.9393 21.5496 11.8788 21.5248 11.8228ZM15 14.1875C14.5673 14.1875 14.1444 14.0592 13.7847 13.8188C13.425 13.5785 13.1446 13.2368 12.979 12.8371C12.8134 12.4374 12.7701 11.9976 12.8545 11.5732C12.9389 11.1489 13.1473 10.7591 13.4532 10.4532C13.7591 10.1473 14.1489 9.93894 14.5732 9.85453C14.9976 9.77013 15.4374 9.81345 15.8371 9.97901C16.2368 10.1446 16.5785 10.425 16.8188 10.7847C17.0592 11.1444 17.1875 11.5674 17.1875 12C17.1875 12.5802 16.957 13.1366 16.5468 13.5468C16.1366 13.957 15.5802 14.1875 15 14.1875Z"/></svg>
+                    }
+                  </button>
+                </div>
+              </div>
 
-            {/* W × H dimensions */}
-            <div className="flex items-center" style={{ gap: 4 }}>
-              <ArtboardNumInput
-                value={w} min={1}
-                onChange={v => setNodeProperty(targetId, 'props.width', v, { recordHistory: true })}
-              />
-              <button
-                onClick={() => setNodeProperty(targetId, 'transform.scaleLink', !targetNode.transform?.scaleLink)}
-                className="w-6 h-6 flex items-center justify-center shrink-0 rounded transition-colors"
-                style={{ color: targetNode.transform?.scaleLink ? 'var(--accent)' : 'rgba(221,234,248,0.40)' }}
-              >
-                <Link2 size={14} />
-              </button>
-              <ArtboardNumInput
-                value={h} min={1}
-                onChange={v => setNodeProperty(targetId, 'props.height', v, { recordHistory: true })}
-              />
-            </div>
+              {/* Row: Preset dropdown */}
+              <div style={AB_ROW}>
+                <div className="relative">
+                  <button
+                    onClick={() => setShowPresets(v => !v)}
+                    className="flex items-center w-full"
+                    style={AB_DROPDOWN}
+                  >
+                    <span className="flex-1 text-left truncate" style={AB_FONT}>{presetLabel}</span>
+                    <div className="flex items-center justify-center shrink-0" style={{ width: 34, height: 34 }}>
+                      <svg width="14" height="14" viewBox="6 8 12 8" fill="none"><path d="M13.6464 11.1464C13.8417 10.9512 14.1582 10.9512 14.3535 11.1464C14.5487 11.3417 14.5487 11.6582 14.3535 11.8535L12.3535 13.8535C12.1582 14.0487 11.8417 14.0487 11.6464 13.8535L9.64645 11.8535C9.45118 11.6582 9.45118 11.3417 9.64645 11.1464C9.84171 10.9512 10.1582 10.9512 10.3535 11.1464L12 12.7929L13.6464 11.1464Z" fill="white"/></svg>
+                    </div>
+                  </button>
+                  {showPresets && (
+                    <>
+                      <div className="fixed inset-0 z-[99]" onClick={() => setShowPresets(false)} />
+                      <div className="absolute top-full left-0 right-0 mt-1 z-[100] rounded overflow-hidden"
+                        style={{ background: '#27292C', border: '1px solid #444444', boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}
+                      >
+                        {PRESETS.map(p => (
+                          <button
+                            key={p.label}
+                            className="w-full text-left px-3 py-2 hover:bg-white/5 transition-colors"
+                            style={{ ...AB_FONT, color: (w === p.w && h === p.h) ? 'var(--accent)' : '#FFFFFF' }}
+                            onClick={() => { setNodeProperties(targetId, { 'props.width': p.w, 'props.height': p.h }); setShowPresets(false); }}
+                          >
+                            {p.label}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
 
-            {/* Separator */}
-            <div className="h-px" style={{ background: 'rgba(221,234,248,0.08)' }} />
+              {/* Row: W/H dimensions */}
+              <div style={AB_ROW}>
+                <div className="flex items-center" style={{ ...AB_FIELD, overflow: 'hidden' }}>
+                  {/* W */}
+                  <div className="flex items-center flex-1">
+                    <div className="flex items-center justify-center shrink-0" style={{ width: 34, height: 34 }}>
+                      <span style={AB_LABEL}>W</span>
+                    </div>
+                    <ArtboardInlineInput value={w} min={1}
+                      onChange={v => setNodeProperty(targetId, 'props.width', v, { recordHistory: true })} />
+                  </div>
+                  <div style={{ width: 2, alignSelf: 'stretch', background: '#2C2C2C' }} />
+                  {/* H */}
+                  <div className="flex items-center flex-1">
+                    <div className="flex items-center justify-center shrink-0" style={{ width: 34, height: 34 }}>
+                      <span style={AB_LABEL}>H</span>
+                    </div>
+                    <ArtboardInlineInput value={h} min={1}
+                      onChange={v => setNodeProperty(targetId, 'props.height', v, { recordHistory: true })} />
+                  </div>
+                  {/* Link */}
+                  <button
+                    onClick={() => setNodeProperty(targetId, 'transform.scaleLink', !targetNode.transform?.scaleLink)}
+                    className="flex items-center justify-center shrink-0 transition-colors"
+                    style={{ height: '100%', padding: '0 8px', borderLeft: '2px solid #2C2C2C', color: targetNode.transform?.scaleLink ? '#FFFFFF' : 'rgba(255,255,255,0.4)' }}
+                  >
+                    <svg width="18" height="18" viewBox="6 6 18 12" fill="currentColor"><path d="M9.53125 12C9.53125 12.5221 9.73867 13.0229 10.1079 13.3921C10.4771 13.7613 10.9779 13.9688 11.5 13.9688H13.6875C13.8615 13.9688 14.0285 14.0379 14.1515 14.161C14.2746 14.284 14.3438 14.451 14.3438 14.625C14.3438 14.799 14.2746 14.966 14.1515 15.089C14.0285 15.2121 13.8615 15.2812 13.6875 15.2812H11.5C10.6298 15.2812 9.79516 14.9355 9.17981 14.3202C8.56445 13.7048 8.21875 12.8702 8.21875 12C8.21875 11.1298 8.56445 10.2952 9.17981 9.67981C9.79516 9.06445 10.6298 8.71875 11.5 8.71875H13.6875C13.8615 8.71875 14.0285 8.78789 14.1515 8.91096C14.2746 9.03403 14.3438 9.20095 14.3438 9.375C14.3438 9.54905 14.2746 9.71597 14.1515 9.83904C14.0285 9.96211 13.8615 10.0312 13.6875 10.0312H11.5C10.9779 10.0312 10.4771 10.2387 10.1079 10.6079C9.73867 10.9771 9.53125 11.4779 9.53125 12ZM18.5 8.71875H16.3125C16.1385 8.71875 15.9715 8.78789 15.8485 8.91096C15.7254 9.03403 15.6562 9.20095 15.6562 9.375C15.6562 9.54905 15.7254 9.71597 15.8485 9.83904C15.9715 9.96211 16.1385 10.0312 16.3125 10.0312H18.5C19.0221 10.0312 19.5229 10.2387 19.8921 10.6079C20.2613 10.9771 20.4688 11.4779 20.4688 12C20.4688 12.5221 20.2613 13.0229 19.8921 13.3921C19.5229 13.7613 19.0221 13.9688 18.5 13.9688H16.3125C16.1385 13.9688 15.9715 14.0379 15.8485 14.161C15.7254 14.284 15.6562 14.451 15.6562 14.625C15.6562 14.799 15.7254 14.966 15.8485 15.089C15.9715 15.2121 16.1385 15.2812 16.3125 15.2812H18.5C19.3702 15.2812 20.2048 14.9355 20.8202 14.3202C21.4355 13.7048 21.7812 12.8702 21.7812 12C21.7812 11.1298 21.4355 10.2952 20.8202 9.67981C20.2048 9.06445 19.3702 8.71875 18.5 8.71875Z"/></svg>
+                  </button>
+                </div>
+              </div>
 
-            {/* Artboard color */}
-            <div
-              className="h-8 flex items-center rounded-[4px]"
-              style={{ background: 'rgba(221,234,248,0.08)', padding: '0 12px', gap: 12 }}
-            >
-              <div
-                className="w-4 h-4 rounded-[2px] shrink-0 relative overflow-hidden cursor-pointer"
-                style={{ background: isTransparent ? 'repeating-conic-gradient(#808080 0% 25%, #fff 0% 50%) 0 0 / 8px 8px' : bgColor }}
-              >
-                {!isTransparent && (
-                  <input
-                    type="color"
-                    value={bgColor.length === 7 ? bgColor : '#FFFFFF'}
-                    onChange={e => setNodeProperty(targetId, 'props.backgroundColor', e.target.value, { recordHistory: true })}
-                    className="absolute inset-[-4px] w-[calc(100%+8px)] h-[calc(100%+8px)] border-none cursor-pointer opacity-0"
+              {/* Row: Duration + FPS */}
+              <div className="flex" style={{ ...AB_ROW, gap: 8 }}>
+                {/* Duration */}
+                <div className="flex items-center flex-1" style={AB_FIELD}>
+                  <div className="flex items-center justify-center shrink-0" style={{ width: 34, height: 34 }}>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="rgba(255,255,255,0.8)">
+                      <path d="M12 6C15.3137 6 18 8.68629 18 12C18 15.3137 15.3137 18 12 18C8.68629 18 6 15.3137 6 12C6 8.68629 8.68629 6 12 6ZM12 7C9.23858 7 7 9.23858 7 12C7 14.7614 9.23858 17 12 17C14.7614 17 17 14.7614 17 12C17 9.23858 14.7614 7 12 7ZM12 8.5C12.2761 8.5 12.5 8.72386 12.5 9V11.793L14.0674 13.3604C14.2626 13.5556 14.2626 13.8721 14.0674 14.0674C13.8721 14.2626 13.5556 14.2626 13.3604 14.0674L11.6465 12.3535C11.5527 12.2597 11.5 12.1326 11.5 12V9C11.5 8.72386 11.7239 8.5 12 8.5Z"/>
+                    </svg>
+                  </div>
+                  <ArtboardDurationInput
+                    value={duration} fps={fps}
+                    onChange={frames => setNodeProperty(targetId, 'props.duration', frames, { recordHistory: true })}
                   />
-                )}
+                </div>
+                {/* FPS dropdown */}
+                <div className="relative flex-1">
+                  <button
+                    onClick={() => setShowFpsMenu(v => !v)}
+                    className="flex items-center w-full"
+                    style={AB_DROPDOWN}
+                  >
+                    <span className="flex-1 text-left" style={AB_FONT}>{fps} FPS</span>
+                    <div className="flex items-center justify-center shrink-0" style={{ width: 34, height: 34 }}>
+                      <svg width="14" height="14" viewBox="6 8 12 8" fill="none"><path d="M13.6464 11.1464C13.8417 10.9512 14.1582 10.9512 14.3535 11.1464C14.5487 11.3417 14.5487 11.6582 14.3535 11.8535L12.3535 13.8535C12.1582 14.0487 11.8417 14.0487 11.6464 13.8535L9.64645 11.8535C9.45118 11.6582 9.45118 11.3417 9.64645 11.1464C9.84171 10.9512 10.1582 10.9512 10.3535 11.1464L12 12.7929L13.6464 11.1464Z" fill="white"/></svg>
+                    </div>
+                  </button>
+                  {showFpsMenu && (
+                    <>
+                      <div className="fixed inset-0 z-[99]" onClick={() => setShowFpsMenu(false)} />
+                      <div className="absolute bottom-full left-0 right-0 mb-1 z-[100] rounded overflow-hidden"
+                        style={{ background: '#27292C', border: '1px solid #444444', boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}
+                      >
+                        {[12, 24, 25, 30, 60, 120].map(f => (
+                          <button
+                            key={f}
+                            className="w-full text-left px-3 py-2 hover:bg-white/5 transition-colors"
+                            style={{ ...AB_FONT, color: fps === f ? 'var(--accent)' : '#FFFFFF' }}
+                            onClick={() => {
+                              const newDuration = Math.round((duration / fps) * f);
+                              setNodeProperties(targetId, { 'props.frameRate': f, 'props.duration': newDuration });
+                              setShowFpsMenu(false);
+                            }}
+                          >
+                            {f} FPS
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
-              <input
-                type="text"
-                value={editingHex !== null ? editingHex : displayHex}
-                readOnly={isTransparent}
-                onFocus={e => {
-                  if (!isTransparent) {
-                    const hex = bgColor.replace('#', '').toUpperCase();
-                    setEditingHex(hex);
-                    // Select all after state update so the browser sees the new value
-                    requestAnimationFrame(() => e.target.select());
-                  }
-                }}
-                onChange={e => {
-                  if (isTransparent) return;
-                  const raw = e.target.value;
-                  setEditingHex(raw);
-                  // Apply immediately when a complete valid hex is typed/pasted
-                  const parsed = parseColorInput(raw);
-                  if (parsed) setNodeProperty(targetId, 'props.backgroundColor', parsed, { recordHistory: false });
-                }}
-                onBlur={e => {
-                  const parsed = parseColorInput(e.target.value);
-                  if (parsed) setNodeProperty(targetId, 'props.backgroundColor', parsed, { recordHistory: true });
-                  setEditingHex(null);
-                }}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-                  if (e.key === 'Escape') { setEditingHex(null); (e.target as HTMLInputElement).blur(); }
-                }}
-                className="flex-1 bg-transparent outline-none text-[14px]"
-                style={{ color: 'rgba(241,247,254,0.71)', fontWeight: 400 }}
-              />
-              <button
-                onClick={() => setNodeProperty(targetId, 'props.transparent', !isTransparent)}
-                className="w-4 h-4 flex items-center justify-center shrink-0 transition-colors"
-                style={{ color: isTransparent ? 'rgba(241,247,254,0.30)' : 'rgba(241,247,254,0.71)' }}
-                title={isTransparent ? 'Show background' : 'Hide background (transparent)'}
-              >
-                {isTransparent ? <EyeOff size={16} strokeWidth={1.75} /> : <Eye size={16} strokeWidth={1.75} />}
-              </button>
-            </div>
 
-            {/* Separator */}
-            <div className="h-px" style={{ background: 'rgba(221,234,248,0.08)' }} />
-
-            {/* Duration + FPS */}
-            <div className="flex items-center" style={{ gap: 6 }}>
-              <div
-                className="flex-1 h-8 flex items-center rounded-[4px] px-2"
-                style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}
-              >
-                <ArtboardDurationInput
-                  value={duration}
-                  fps={fps}
-                  onChange={frames => setNodeProperty(targetId, 'props.duration', frames, { recordHistory: true })}
-                />
-              </div>
-              <ArtboardNumInput
-                value={fps} min={1} max={120} suffix=" FPS"
-                onChange={v => {
-                  const rounded = Math.round(v);
-                  // Always preserve the real-time duration when FPS changes
-                  const durationSecs = duration / fps;
-                  const newDuration = Math.round(durationSecs * rounded);
-                  setNodeProperties(targetId, {
-                    'props.frameRate': rounded,
-                    'props.duration': newDuration,
-                  });
-                }}
-              />
             </div>
           </div>
         );
@@ -1954,6 +1970,70 @@ function ArtboardNumInput({
   );
 }
 
+function ArtboardInlineInput({ value, min, max, onChange }: {
+  value: number; min?: number; max?: number; onChange: (v: number) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [local, setLocal] = useState('');
+  const ref = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { if (editing) { ref.current?.focus(); ref.current?.select(); } }, [editing]);
+
+  const commit = () => {
+    setEditing(false);
+    const n = parseFloat(local);
+    if (!isNaN(n)) onChange(Math.round(Math.max(min ?? -Infinity, Math.min(max ?? Infinity, n))));
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (editing || e.button !== 0) return;
+    const startX = e.clientX;
+    const startVal = value;
+    let moved = false;
+    const onMove = (me: MouseEvent) => {
+      const dx = me.clientX - startX;
+      if (Math.abs(dx) > 3) moved = true;
+      if (moved) {
+        const sensitivity = me.shiftKey ? 10 : me.altKey ? 0.1 : 1;
+        onChange(Math.round(Math.max(min ?? -Infinity, Math.min(max ?? Infinity, startVal + dx * sensitivity))));
+      }
+    };
+    const onUp = () => {
+      if (!moved) { setLocal(value.toString()); setEditing(true); }
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = 'default';
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'ew-resize';
+  };
+
+  if (editing) {
+    return (
+      <input ref={ref} type="text"
+        className="flex-1 bg-transparent outline-none text-center"
+        style={{ fontFamily: 'Inter, sans-serif', fontWeight: 450, fontSize: 12, color: '#FFFFFF' }}
+        value={local}
+        onChange={e => setLocal(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
+      />
+    );
+  }
+
+  return (
+    <div className="flex-1 flex items-center justify-center cursor-ew-resize select-none h-full"
+      onMouseDown={handleMouseDown}
+      onClick={() => { setLocal(value.toString()); setEditing(true); }}
+    >
+      <span style={{ fontFamily: 'Inter, sans-serif', fontWeight: 450, fontSize: 12, color: '#FFFFFF' }}>
+        {Number.isInteger(value) ? value : Math.round(value)}
+      </span>
+    </div>
+  );
+}
+
 function DurationTimeInput({ label, value, fps, onValueChange }: { label: string, value: number, fps: number, onValueChange: (val: number) => void }) {
   const mins = Math.floor(value / (fps * 60));
   const secs = Math.floor((value % (fps * 60)) / fps);
@@ -1999,9 +2079,9 @@ function ArtboardDurationInput({ value, fps, onChange }: { value: number; fps: n
   return (
     <div className="flex items-center gap-0.5 w-full justify-center">
       <ArtboardTimeSegment value={mins} max={99} onCommit={v => commit('m', v)} />
-      <span className="text-[13px]" style={{ color: 'rgba(241,247,254,0.30)' }}>:</span>
+      <span style={{ color: 'rgba(255,255,255,0.3)', fontFamily: 'Inter, sans-serif', fontSize: 12 }}>:</span>
       <ArtboardTimeSegment value={secs} max={59} onCommit={v => commit('s', v)} />
-      <span className="text-[13px]" style={{ color: 'rgba(241,247,254,0.30)' }}>:</span>
+      <span style={{ color: 'rgba(255,255,255,0.3)', fontFamily: 'Inter, sans-serif', fontSize: 12 }}>:</span>
       <ArtboardTimeSegment value={frames} max={fps - 1} onCommit={v => commit('f', v)} />
     </div>
   );
@@ -2030,8 +2110,8 @@ function ArtboardTimeSegment({ value, max, onCommit }: { value: number; max: num
       onBlur={commit}
       onChange={e => setLocal(e.target.value.replace(/\D/g, '').slice(-2))}
       onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
-      className="w-[20px] bg-transparent outline-none text-[13px] text-center cursor-pointer"
-      style={{ color: '#EDEEF0', fontWeight: 400 }}
+      className="w-[22px] bg-transparent outline-none text-[12px] text-center cursor-pointer"
+      style={{ color: '#FFFFFF', fontWeight: 450, fontFamily: 'Inter, sans-serif' }}
     />
   );
 }

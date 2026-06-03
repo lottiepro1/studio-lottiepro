@@ -230,6 +230,7 @@ export const createSceneSlice: StateCreator<CreatorStore, [["zustand/immer", nev
     // Track changed categories in closure vars — readable after set() returns.
     let typeChanged = false;
     let visibilityChanged = false;
+    let parentLayerChanged = false;
     set((draft) => {
       const node = draft.nodes.get(id);
       if (!node) return;
@@ -238,9 +239,13 @@ export const createSceneSlice: StateCreator<CreatorStore, [["zustand/immer", nev
       // Visibility change: ThorVG doesn't reliably pick up in-place hd patches; force slow-path
       // so LottieExporter re-exports with the correct hd flag.
       visibilityChanged = updates.visible !== undefined && updates.visible !== node.visible;
+      // Parent layer change: patchLottieNode only patches transform properties, not the Lottie
+      // layer's parent index. Setting parentLayerId requires a full re-export so ThorVG renders
+      // the child in the correct coordinate space instead of treating local coords as world coords.
+      parentLayerChanged = 'parentLayerId' in updates && updates.parentLayerId !== node.parentLayerId;
       Object.assign(node, updates);
       draft.updateCounter++;
-      if (typeChanged || visibilityChanged) {
+      if (typeChanged || visibilityChanged || parentLayerChanged) {
         draft.structureChangeCounter++;
       } else {
         // Child-of-group nodes are not in lottieNodeMap, so patchLottieNode skips them.
@@ -254,9 +259,9 @@ export const createSceneSlice: StateCreator<CreatorStore, [["zustand/immer", nev
       }
     });
     // patchLottieNode is only useful for property-only changes on top-level nodes.
-    // Type and visibility changes use structureChangeCounter above (slow-path re-export).
+    // Type, visibility and parent-layer changes use structureChangeCounter (slow-path re-export).
     // Child-of-group changes use childUpdateCounter above (also slow-path re-export).
-    if (!typeChanged && !visibilityChanged) {
+    if (!typeChanged && !visibilityChanged && !parentLayerChanged) {
       const state = get();
       if (state.lottieJsonCache || state.lottieNodeMap?.has(id)) state.patchLottieNode(id);
     }

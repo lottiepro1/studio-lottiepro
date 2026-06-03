@@ -690,8 +690,9 @@ export class LottieParser {
                 const child = nodeMap.get(childId);
                 if (!child) { newChildIds.push(childId); continue; }
 
-                // NEVER flatten a node marked as a Lottie Layer
-                if (child.type === 'group' && child.children.length === 1 && !child.props?.isLayer) {
+                // NEVER flatten a node marked as a Lottie Layer or a Lottie shape group (gr item).
+                // Shape groups represent the real AE/LottieFiles hierarchy: Layer → Group → Path.
+                if (child.type === 'group' && child.children.length === 1 && !child.props?.isLayer && !child.props?.isShapeGroup) {
                     const grandchildId = child.children[0];
                     const grandchild = nodeMap.get(grandchildId);
 
@@ -1513,7 +1514,10 @@ export class LottieParser {
                     outPoint: parentNode.outPoint,
                     style: { ...currentStyle, opacity: 1 },
                     // Inherit style animations (excluding transform opacity which is handled by tr)
-                    animations: Object.fromEntries(Object.entries(currentAnimations).filter(([k]) => k.startsWith('style.') && k !== 'style.opacity'))
+                    animations: Object.fromEntries(Object.entries(currentAnimations).filter(([k]) => k.startsWith('style.') && k !== 'style.opacity')),
+                    // Mark as a Lottie shape group (gr item) so the flattener never collapses it.
+                    // AE/LottieFiles always shows this level: Layer → Group → Path/Shape.
+                    props: { isShapeGroup: true }
                 });
                 parentNode.children.push(groupNode.id);
                 (item as any)._creatorId = groupNode.id;

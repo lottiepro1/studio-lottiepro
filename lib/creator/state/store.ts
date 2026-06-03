@@ -61,6 +61,37 @@ export const useCreatorStore = create<CreatorStore>()(immer((set, get, api) => (
     }
   },
 
+  // Adds a layer group + inner shape together atomically (for tool-created shapes that need AE-style wrapping).
+  addLayerWithShape: (layer: SceneNode, shape: SceneNode) => {
+    const state = get();
+    const activeArtboardId = state.activeArtboardId;
+    const artboard = activeArtboardId ? state.nodes.get(activeArtboardId) : Array.from(state.nodes.values()).find(n => n.type === 'artboard');
+
+    if (artboard) {
+      const duration = state.duration || 300;
+      layer.parentId = artboard.id;
+      if (layer.inPoint === undefined) layer.inPoint = 0;
+      if (layer.outPoint === undefined) layer.outPoint = duration;
+      if (shape.inPoint === undefined) shape.inPoint = 0;
+      if (shape.outPoint === undefined) shape.outPoint = duration;
+
+      const newNodes = new Map(state.nodes);
+      newNodes.set(layer.id, layer);
+      newNodes.set(shape.id, shape);
+
+      const updatedArtboard = { ...artboard, children: [...artboard.children, layer.id] };
+      newNodes.set(artboard.id, updatedArtboard);
+
+      get().pushToHistory(`Add ${layer.name}`);
+
+      set({
+        nodes: newNodes,
+        updateCounter: state.updateCounter + 1,
+        structureChangeCounter: state.structureChangeCounter + 1,
+      });
+    }
+  },
+
   groupNodes: (nodeIds: string[]) => {
     if (nodeIds.length < 1) return;
     const state = get();

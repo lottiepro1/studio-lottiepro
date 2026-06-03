@@ -915,7 +915,6 @@ export const createAnimationSlice: StateCreator<CreatorStore, [["zustand/immer",
             const existingIndex = kfs.findIndex(k => k.time === state.currentTime);
 
             if (existingIndex !== -1) {
-                // Remove existing keyframe at current time
                 kfs.splice(existingIndex, 1);
                 if (kfs.length === 0) {
                     delete animations[propertyPath];
@@ -923,7 +922,6 @@ export const createAnimationSlice: StateCreator<CreatorStore, [["zustand/immer",
                     animations[propertyPath] = kfs;
                 }
             } else {
-                // Add keyframe at current time
                 const val = AnimationUtils.getPropertyValue(node, propertyPath, state.currentTime);
                 kfs.push({
                     id: `kf_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
@@ -935,17 +933,13 @@ export const createAnimationSlice: StateCreator<CreatorStore, [["zustand/immer",
                 animations[propertyPath] = kfs;
             }
         } else {
-            // If stopwatch clicked when OFF, add keyframe at current time
             const val = AnimationUtils.getPropertyValue(node, propertyPath, state.currentTime);
-
             animations[propertyPath] = [{
                 id: `kf_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
                 time: state.currentTime,
                 value: safeKfValue(val, propertyPath),
                 easing: 'linear'
             }];
-
-            // Auto-expand when animation is first turned on
             get().ensureExpansion(nodeId, propertyPath);
         }
 
@@ -1478,6 +1472,43 @@ export const createAnimationSlice: StateCreator<CreatorStore, [["zustand/immer",
             if (nodeId === state.activeArtboardId) {
                 if (processedUpdates['props.duration'] !== undefined) updates.duration = processedUpdates['props.duration'];
                 if (processedUpdates['props.frameRate'] !== undefined) updates.fps = processedUpdates['props.frameRate'];
+            }
+        }
+
+        // When a rect's anchor shifts due to a size change (anchorAlignX=0.5 → anchor = width/2),
+        // AE-parented children must compensate so their world positions stay unchanged.
+        // Canvas resize is handled by CanvasView's child propagation (which also updates transform.x),
+        // so we only run this fix when transform.x is NOT changing (pure inspector size edit).
+        if (
+            (node.type === 'rect' || node.type === 'ellipse') &&
+            !options?.ignoreAnchorFollowing &&
+            !('transform.x' in processedUpdates)
+        ) {
+            const dax = (nodeCopy.transform.anchorX ?? 0) - (node.transform.anchorX ?? 0);
+            const day = (nodeCopy.transform.anchorY ?? 0) - (node.transform.anchorY ?? 0);
+            if (dax !== 0 || day !== 0) {
+                newNodes.forEach((childNode, childId) => {
+                    if (childNode.parentLayerId !== nodeId) return;
+                    const cx = AnimationUtils.getPropertyValue(childNode, 'transform.x', state.currentTime);
+                    const cy = AnimationUtils.getPropertyValue(childNode, 'transform.y', state.currentTime);
+                    const updatedChild: any = {
+                        ...childNode,
+                        transform: { ...childNode.transform, x: cx + dax, y: cy + day }
+                    };
+                    if (childNode.animations?.['transform.x'] && dax !== 0) {
+                        updatedChild.animations = {
+                            ...updatedChild.animations,
+                            'transform.x': childNode.animations['transform.x'].map((kf: any) => ({ ...kf, value: kf.value + dax }))
+                        };
+                    }
+                    if (childNode.animations?.['transform.y'] && day !== 0) {
+                        updatedChild.animations = {
+                            ...updatedChild.animations,
+                            'transform.y': childNode.animations['transform.y'].map((kf: any) => ({ ...kf, value: kf.value + day }))
+                        };
+                    }
+                    newNodes.set(childId, updatedChild);
+                });
             }
         }
 

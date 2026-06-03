@@ -1,26 +1,29 @@
 'use client';
 
-import { useRef, useEffect, useMemo, useState } from 'react';
+import { useRef, useEffect, useMemo, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useCreatorStore } from '@/lib/creator/state/store';
 import { playbackRef } from '@/lib/creator/state/playbackRef';
 import {
   Play, Pause, Square, ChevronLeft, ChevronRight, ChevronDown,
-  Settings, Trash2, Timer, Repeat,
+  Settings, Trash2, Timer, Repeat, Plus,
 } from 'lucide-react';
+import { SkipBack, Play as PhPlay, Pause as PhPause, SkipForward } from '@phosphor-icons/react';
 import TimelineSidebarTrack from './TimelineSidebarTrack';
 import TimelineKeyframeTrack from './TimelineKeyframeTrack';
 import { SceneNode } from '@/lib/creator/state/sceneSlice';
+import { getWorldMatrix, decomposeMatrix } from '@/lib/creator/core/Matrix';
 
-// ── Design tokens (Figma 2001-1051) ─────────────────────────────────────────
-const PANEL_BG      = '#1D1D1D';
-const TAB_STRIP_BG  = '#18191B';
-const TAB_ACTIVE_BG = '#111113';
-const TAB_ACTIVE_BD = 'rgba(211,237,248,0.11)';
-const DIVIDER       = 'rgba(221,234,248,0.08)';
-const TEXT_COLOR    = 'rgba(241,247,254,0.71)';
-const TEXT_DIM      = 'rgba(241,247,254,0.50)';
-
-export default function TimelinePanel() {
+// ── Design tokens (Figma design.bottom) ─────────────────────────────────────
+const PANEL_BG      = '#2C2C2C';
+const TAB_STRIP_BG  = '#383838';
+const SIDEBAR_BD    = 'rgba(255,255,255,0.1)';
+const RULER_BORDER  = '#444444';
+const CONTROLS_BG   = '#383838';
+const TEXT_COLOR    = '#FFFFFF';
+const TEXT_DIM      = 'rgba(255,255,255,0.4)';
+export default function TimelinePanel({ sidebarWidth = 320 }: { sidebarWidth?: number }) {
+  const SIDEBAR_W = sidebarWidth;
   const nodes = useCreatorStore((state) => state.nodes);
   const selectedKeyframeIds = useCreatorStore((state) => state.selectedKeyframeIds);
   const selectKeyframes = useCreatorStore((state) => state.selectKeyframes);
@@ -58,6 +61,93 @@ export default function TimelinePanel() {
   const isTimelineCollapsed = useCreatorStore((state) => state.isTimelineCollapsed);
   const setTimelineCollapsed = useCreatorStore((state) => state.setTimelineCollapsed);
 
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+
+  type PickWhipState = {
+    type: 'matte' | 'parent';
+    sourceNodeId: string;
+    startX: number; startY: number;
+    currentX: number; currentY: number;
+    targetNodeId: string | null;
+  } | null;
+  const [pickWhip, setPickWhip] = useState<PickWhipState>(null);
+  const pickWhipLatest = useRef<PickWhipState>(null);
+  pickWhipLatest.current = pickWhip;
+
+  const applyPickWhip = useCallback((type: 'matte' | 'parent', sourceId: string, targetId: string) => {
+    const state = useCreatorStore.getState();
+    if (type === 'matte') {
+      state.pushToHistory('Set Matte');
+      state.setMatte(sourceId, targetId);
+    } else {
+      const storeNodes = state.nodes;
+      const targetName = storeNodes.get(targetId)?.name ?? targetId;
+      const targetIds = state.selectedIds.includes(sourceId) ? state.selectedIds : [sourceId];
+      const ct = state.currentTime;
+
+      // Pre-compute all transforms before pushToHistory mutates state
+      const updates: Array<{ id: string; parentLayerId: string; transform: any }> = [];
+      targetIds.forEach(id => {
+        const n = storeNodes.get(id);
+        if (!n || id === targetId) return;
+        const childWorld = getWorldMatrix(id, storeNodes, ct);
+        const parentWorld = getWorldMatrix(targetId, storeNodes, ct);
+        const rel = parentWorld.inverse().multiply(childWorld);
+        const decomp = decomposeMatrix(rel, { x: n.transform.anchorX, y: n.transform.anchorY });
+        updates.push({
+          id,
+          parentLayerId: targetId,
+          transform: { ...n.transform, x: decomp.x, y: decomp.y, rotation: decomp.rotation, scaleX: decomp.scaleX, scaleY: decomp.scaleY }
+        });
+      });
+
+      state.pushToHistory(`Parent to ${targetName}`);
+      updates.forEach(({ id, parentLayerId, transform }) => {
+        state.updateNode(id, { parentLayerId, transform });
+      });
+    }
+  }, []);
+
+  const pickWhipActive = !!pickWhip;
+  useEffect(() => {
+    if (!pickWhipActive) return;
+
+    const onMove = (e: MouseEvent) => {
+      let targetId: string | null = null;
+      const elements = document.elementsFromPoint(e.clientX, e.clientY);
+      for (const el of elements) {
+        const track = (el as HTMLElement).closest?.('[data-track-id]');
+        if (track) {
+          const id = track.getAttribute('data-track-id');
+          if (id && id !== pickWhipLatest.current?.sourceNodeId) { targetId = id; break; }
+        }
+      }
+      setPickWhip(prev => prev ? { ...prev, currentX: e.clientX, currentY: e.clientY, targetNodeId: targetId } : null);
+    };
+
+    const onUp = () => {
+      const pw = pickWhipLatest.current;
+      if (pw?.targetNodeId) applyPickWhip(pw.type, pw.sourceNodeId, pw.targetNodeId);
+      setPickWhip(null);
+      document.body.style.cursor = '';
+    };
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setPickWhip(null); document.body.style.cursor = ''; }
+    };
+
+    document.body.style.cursor = 'crosshair';
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('keydown', onKey);
+      document.body.style.cursor = '';
+    };
+  }, [pickWhipActive]);
+
   const [marqueeRect, setMarqueeRect] = useState<{ startX: number; startY: number; endX: number; endY: number } | null>(null);
   const [workAreaMenu, setWorkAreaMenu] = useState<{ x: number; y: number } | null>(null);
   const [scrollLeft, setScrollLeft] = useState(0);
@@ -87,9 +177,15 @@ export default function TimelinePanel() {
 
   const basePixelsPerFrame = 8;
   const pixelsPerFrame = basePixelsPerFrame * zoomLevel;
-  const rowHeight = 32;
+  const rowHeight = 28;
   const timelinePaddingLeft = 28;
-  const RULER_HEIGHT = 32;
+  const RULER_HEIGHT = 40;
+
+  const fmtTime = (frames: number) => {
+    const s = Math.floor(frames / fps);
+    const f = Math.round(frames % fps);
+    return `${s}:${f.toString().padStart(2, '0')}`;
+  };
 
   const timelineRef = useRef<HTMLDivElement>(null);
   const sidebarRef = useRef<HTMLDivElement>(null);
@@ -462,100 +558,132 @@ export default function TimelinePanel() {
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
+    <>
     <div className="w-full h-full flex flex-col overflow-hidden select-none" style={{ background: PANEL_BG }}>
 
-      {/* ── Artboard tabs row (Frame 19) ─────────────────────────────── */}
+      {/* ── Artboard tabs row ───────────────────────────────────────── */}
       <div
-        className="shrink-0 flex items-end overflow-x-auto no-scrollbar"
-        style={{ height: 32, background: TAB_STRIP_BG, borderBottom: `1px solid ${DIVIDER}` }}
+        className="shrink-0 flex items-center overflow-x-auto no-scrollbar"
+        style={{ background: TAB_STRIP_BG, borderBottom: `1px solid ${SIDEBAR_BD}` }}
       >
-        {/* Collapse toggle */}
+        {/* Artboard tabs — each 241px wide (240 sidebar + 1px right border) */}
+        {artboards.map(ab => (
+          <button
+            key={ab.id}
+            onClick={() => setActiveArtboard(ab.id)}
+            className="shrink-0 flex items-center justify-between transition-colors hover:opacity-80"
+            style={{
+              width: SIDEBAR_W + 1,
+              padding: '7px 8px',
+              borderRight: `1px solid ${SIDEBAR_BD}`,
+              fontFamily: 'Inter, sans-serif',
+              fontWeight: 450,
+              fontSize: 11,
+              color: TEXT_COLOR,
+            }}
+          >
+            <span className="truncate">{ab.name}</span>
+          </button>
+        ))}
+
+        {/* Add artboard button */}
         <button
-          onClick={() => setTimelineCollapsed(!isTimelineCollapsed)}
-          className="w-8 h-8 flex items-center justify-center shrink-0 transition-colors hover:opacity-70"
-          style={{ color: TEXT_DIM }}
-          title={isTimelineCollapsed ? 'Expand Timeline' : 'Collapse Timeline'}
+          className="flex items-center justify-center transition-colors hover:opacity-70 shrink-0"
+          style={{ padding: '8px 10px', color: TEXT_COLOR }}
+          title="Add artboard"
         >
-          {isTimelineCollapsed
-            ? <ChevronRight className="w-4 h-4 -rotate-90" />
-            : <ChevronDown className="w-4 h-4" />}
+          <Plus size={14} />
         </button>
 
-        {/* Artboard tab buttons */}
-        {artboards.map(ab => {
-          const isActive = ab.id === (activeArtboardId || artboards[0]?.id);
-          return (
-            <button
-              key={ab.id}
-              onClick={() => setActiveArtboard(ab.id)}
-              className="px-4 h-8 flex items-center shrink-0 transition-colors text-[13px]"
-              style={isActive
-                ? {
-                    background: TAB_ACTIVE_BG,
-                    color: 'rgba(252,253,255,0.94)',
-                    fontWeight: 510,
-                    borderTop: `1px solid ${TAB_ACTIVE_BD}`,
-                    borderLeft: `1px solid ${TAB_ACTIVE_BD}`,
-                    borderRight: `1px solid ${TAB_ACTIVE_BD}`,
-                    borderBottom: 'none',
-                    borderRadius: '4px 4px 0 0',
-                  }
-                : {
-                    background: 'transparent',
-                    borderTop: '1px solid transparent',
-                    borderLeft: '1px solid transparent',
-                    borderRight: '1px solid transparent',
-                    borderBottom: 'none',
-                    color: TEXT_DIM,
-                    fontWeight: 400,
-                  }
-              }
-            >
-              {ab.name}
-            </button>
-          );
-        })}
-
-        {/* Expand button when collapsed */}
-        {isTimelineCollapsed && (
-          <button
-            onClick={() => setTimelineCollapsed(false)}
-            className="ml-auto mr-2 px-3 h-6 text-[11px] font-medium rounded-md border self-center transition-colors hover:opacity-80"
-            style={{ color: 'var(--accent)', borderColor: 'rgba(var(--accent-rgb), 0.2)', background: 'rgba(var(--accent-rgb), 0.1)' }}
-          >
-            Expand
-          </button>
-        )}
+        {/* Collapse / expand toggle — far right */}
+        <button
+          onClick={() => setTimelineCollapsed(!isTimelineCollapsed)}
+          className="ml-auto flex items-center justify-center shrink-0 transition-colors hover:opacity-70"
+          style={{ padding: '8px 10px', color: TEXT_DIM }}
+          title={isTimelineCollapsed ? 'Expand timeline' : 'Collapse timeline'}
+        >
+          {isTimelineCollapsed
+            ? <ChevronRight className="w-3.5 h-3.5 -rotate-90" />
+            : <ChevronDown className="w-3.5 h-3.5" />}
+        </button>
       </div>
 
       {/* ── Main body: sidebar + scrollable track area ───────────────── */}
       <div className="flex-1 flex overflow-hidden">
 
-        {/* ── Left Sidebar (outside scroll — no horizontal overflow) ── */}
+        {/* ── Left Sidebar ────────────────────────────────────────────── */}
         <div
-          ref={sidebarRef}
-          className="w-80 shrink-0 flex flex-col overflow-y-scroll no-scrollbar overflow-x-hidden"
-          style={{ background: PANEL_BG, borderRight: `1px solid ${DIVIDER}` }}
-          onMouseDown={(e) => {
-            const target = e.target as HTMLElement;
-            if (!target.closest('[data-track-id]')) setSelection([]);
-          }}
+          className="shrink-0 flex flex-col overflow-hidden"
+          style={{ width: SIDEBAR_W, background: PANEL_BG, borderRight: `1px solid ${SIDEBAR_BD}` }}
         >
-          {/* Ruler spacer — matches RULER_HEIGHT exactly */}
-          <div className="shrink-0" style={{ height: RULER_HEIGHT }} />
-          <div className="flex flex-col gap-0.5 px-1 pb-1">
-            {sortedNodesData.map(({ node, depth }) => (
-              <TimelineSidebarTrack
-                key={node.id}
-                node={node}
-                depth={depth}
-                rowHeight={rowHeight}
-                isExpanded={!!expandedNodes[node.id]}
-                onToggleExpand={() => toggleNodeExpand(node.id)}
-                onSelect={(isShift, isCtrl) => handleLayerSelect(node.id, isShift, isCtrl)}
-                propertyGroups={propertyGroups}
-              />
-            ))}
+          {/* Playback controls row — aligns with ruler height */}
+          <div
+            className="shrink-0 flex items-center gap-2 px-2"
+            style={{ height: RULER_HEIGHT, borderBottom: `1px solid ${RULER_BORDER}` }}
+          >
+            {/* Time display: current : duration */}
+            <div className="flex items-center gap-1 text-[11px] shrink-0" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 450, color: TEXT_COLOR }}>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtTime(currentTime)}</span>
+              <span style={{ color: TEXT_DIM }}>:</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums', color: TEXT_DIM }}>{fmtTime(duration)}</span>
+            </div>
+
+            {/* Playback buttons pill */}
+            <div className="flex items-center rounded-[5px] shrink-0 ml-auto" style={{ background: CONTROLS_BG }}>
+              <button
+                onClick={() => setCurrentTime(0)}
+                className="flex items-center justify-center w-8 h-6 transition-opacity hover:opacity-70"
+                style={{ color: TEXT_COLOR }}
+                title="Skip to start"
+              >
+                <SkipBack size={12} weight="fill" />
+              </button>
+              <button
+                onClick={togglePlaying}
+                className="flex items-center justify-center w-8 h-6 transition-opacity hover:opacity-70"
+                style={{ color: TEXT_COLOR }}
+                title={isPlaying ? 'Pause' : 'Play'}
+              >
+                {isPlaying ? <PhPause size={12} weight="fill" /> : <PhPlay size={12} weight="fill" />}
+              </button>
+              <button
+                onClick={() => setCurrentTime(duration - 1)}
+                className="flex items-center justify-center w-8 h-6 transition-opacity hover:opacity-70"
+                style={{ color: TEXT_COLOR }}
+                title="Skip to end"
+              >
+                <SkipForward size={12} weight="fill" />
+              </button>
+            </div>
+          </div>
+
+          {/* Track list */}
+          <div
+            ref={sidebarRef}
+            className="flex-1 overflow-y-scroll no-scrollbar overflow-x-hidden"
+            onMouseDown={(e) => {
+              const target = e.target as HTMLElement;
+              if (!target.closest('[data-track-id]')) setSelection([]);
+            }}
+          >
+            <div className="flex flex-col gap-0.5 px-1 pb-1">
+              {sortedNodesData.map(({ node, depth }) => (
+                <TimelineSidebarTrack
+                  key={node.id}
+                  node={node}
+                  depth={depth}
+                  rowHeight={rowHeight}
+                  isExpanded={!!expandedNodes[node.id]}
+                  onToggleExpand={() => toggleNodeExpand(node.id)}
+                  onSelect={(isShift, isCtrl) => handleLayerSelect(node.id, isShift, isCtrl)}
+                  propertyGroups={propertyGroups}
+                  onHoverChange={setHoveredNodeId}
+                  isHovered={hoveredNodeId === node.id}
+                  onPickWhipStart={(type, nodeId, x, y) => setPickWhip({ type, sourceNodeId: nodeId, startX: x, startY: y, currentX: x, currentY: y, targetNodeId: null })}
+                  pickWhipTargetId={pickWhip?.targetNodeId ?? null}
+                />
+              ))}
+            </div>
           </div>
         </div>
 
@@ -585,26 +713,33 @@ export default function TimelinePanel() {
               {/* Ruler — sticky top */}
               <div className="sticky top-0 z-50 pointer-events-none" style={{ height: RULER_HEIGHT }}>
                 <div
-                  className="h-full border-b pointer-events-auto relative overflow-hidden"
-                  style={{ background: PANEL_BG, borderColor: DIVIDER }}
+                  className="h-full pointer-events-auto relative overflow-hidden flex items-center"
+                  style={{ background: PANEL_BG, borderBottom: `1px solid ${RULER_BORDER}` }}
                 >
-                  {/* Tick marks — label top, tick bottom (Figma 2001-1051) */}
+                  {/* Tick marks — Figma style: seconds labels + pipes */}
                   {rulerTicks.map((f, i) => {
                     const s = Math.floor(f / fps);
                     const frames = Math.round(f % fps);
-                    const label = frames === 0 ? `${s}s` : `${frames}f`;
                     const isSec = frames === 0;
+                    const label = isSec ? `${s}s` : '|';
                     return (
                       <div
                         key={i}
-                        className="absolute top-0 flex flex-col items-start"
+                        className="absolute flex items-center justify-center"
                         style={{ left: f * pixelsPerFrame + timelinePaddingLeft, height: '100%' }}
                       >
-                        <span className="text-[10px] pl-1 pt-[3px] leading-none select-none" style={{ color: isSec ? 'rgba(241,247,254,0.55)' : 'rgba(241,247,254,0.28)', fontVariantNumeric: 'tabular-nums' }}>
+                        <span
+                          className="select-none leading-none"
+                          style={{
+                            fontFamily: 'Inter, sans-serif',
+                            fontWeight: isSec ? 450 : 400,
+                            fontSize: isSec ? 11 : 9,
+                            color: isSec ? TEXT_COLOR : TEXT_DIM,
+                            fontVariantNumeric: 'tabular-nums',
+                          }}
+                        >
                           {label}
                         </span>
-                        <div className="flex-1" />
-                        <div className="w-px" style={{ height: isSec ? 8 : 4, background: isSec ? 'rgba(221,234,248,0.30)' : 'rgba(221,234,248,0.14)' }} />
                       </div>
                     );
                   })}
@@ -668,6 +803,9 @@ export default function TimelinePanel() {
                   isExpanded={!!expandedNodes[node.id]}
                   propertyGroups={propertyGroups}
                   onSelect={handleLayerSelect}
+                  isHovered={hoveredNodeId === node.id}
+                  onHoverChange={setHoveredNodeId}
+                  pickWhipTargetId={pickWhip?.targetNodeId ?? null}
                 />
               ))}
             </div>
@@ -710,5 +848,29 @@ export default function TimelinePanel() {
       </div>
 
     </div>
+
+    {/* Pick-whip wire — rendered above everything via portal */}
+    {pickWhip && typeof document !== 'undefined' && createPortal(
+      <svg
+        style={{ position: 'fixed', inset: 0, width: '100vw', height: '100vh', pointerEvents: 'none', zIndex: 99999 }}
+      >
+        <line
+          x1={pickWhip.startX} y1={pickWhip.startY}
+          x2={pickWhip.currentX} y2={pickWhip.currentY}
+          stroke={pickWhip.targetNodeId ? '#4ADE80' : '#4AA3F5'}
+          strokeWidth={1.5}
+          strokeDasharray="5 4"
+          opacity={0.85}
+        />
+        <circle cx={pickWhip.startX} cy={pickWhip.startY} r={3.5} fill="#4AA3F5" />
+        <circle
+          cx={pickWhip.currentX} cy={pickWhip.currentY}
+          r={5} fill={pickWhip.targetNodeId ? '#4ADE80' : '#4AA3F5'}
+          opacity={0.9}
+        />
+      </svg>,
+      document.body
+    )}
+  </>
   );
 }

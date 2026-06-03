@@ -3,19 +3,19 @@
 import { useMemo, useRef, useCallback, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useCreatorStore } from '@/lib/creator/state/store';
-import { LayerItem } from './LayerItem';
+import { LayerItem, getLayerRowHeight } from './LayerItem';
 import { Layers as LayersIcon, Plus, Trash2 } from 'lucide-react';
 
-const PANEL_BG      = '#18191B';
-const SEG_CONT_BG   = '#27292C';
-const SEG_BORDER    = 'rgba(221,234,248,0.08)';
-const ACTIVE_TAB_BG = '#111113';
-const ACTIVE_TAB_BD = 'rgba(211,237,248,0.11)';
-const TEXT_ON       = 'rgba(252,253,255,0.94)';
-const TEXT_OFF      = 'rgba(252,253,255,0.50)';
-const NAME_COLOR    = 'rgba(241,247,254,0.71)';
+const PANEL_BG      = '#2C2C2C';
+const SEG_CONT_BG   = '#383838';
+const SEG_BORDER    = '#444444';
+const ACTIVE_TAB_BG = '#2C2C2C';
+const ACTIVE_TAB_BD = '#444444';
+const TEXT_ON       = '#FFFFFF';
+const TEXT_OFF      = 'rgba(255,255,255,0.5)';
+const NAME_COLOR    = '#FFFFFF';
 
-const ROW_HEIGHT = 36; // 32px item + 4px gap
+const GAP = 4;
 
 export default function LayersPanel() {
   const activeTab    = useCreatorStore(s => s.activeLayersTab);
@@ -61,6 +61,25 @@ export default function LayersPanel() {
     [...(artboard.children || [])].reverse().forEach(id => traverse(id, 0));
     return result;
   }, [nodes, artboard, expandedIds]);
+
+  const treeMeta = useMemo(() => {
+    return flatRows.map((row, i) => {
+      const d = row.depth;
+      const isLastChild = i === flatRows.length - 1 || flatRows[i + 1].depth < d;
+      const showLineAt: boolean[] = [];
+      for (let l = 0; l < d - 1; l++) {
+        let found = false;
+        for (let j = i + 1; j < flatRows.length; j++) {
+          if (flatRows[j].depth <= l + 1) {
+            found = flatRows[j].depth === l + 1;
+            break;
+          }
+        }
+        showLineAt[l] = found;
+      }
+      return { isLastChild, showLineAt };
+    });
+  }, [flatRows]);
 
   const flatOrderedIds = useMemo(() => flatRows.map(r => r.nodeId), [flatRows]);
 
@@ -115,7 +134,7 @@ export default function LayersPanel() {
   const virtualizer = useVirtualizer({
     count: flatRows.length,
     getScrollElement: () => scrollContainerRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: (index) => getLayerRowHeight(flatRows[index]?.depth ?? 0) + GAP,
     overscan: 10,
   });
 
@@ -127,31 +146,40 @@ export default function LayersPanel() {
   };
 
   return (
-    <div className="h-full flex flex-col select-none" style={{ background: PANEL_BG, padding: '12px', gap: '12px' }}>
+    <div className="h-full flex flex-col select-none" style={{ background: PANEL_BG }}>
 
-      {/* Segmented control */}
+      {/* Segmented control — tab row */}
       <div
-        className="flex items-stretch shrink-0 rounded-[6px] p-[2px] gap-[1px]"
-        style={{ background: SEG_CONT_BG, border: `1px solid ${SEG_BORDER}` }}
+        className="shrink-0 px-2 py-2.5"
+        style={{ borderBottom: `1px solid ${SEG_BORDER}` }}
       >
-        {(['layers', 'segments'] as const).map(tab => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className="flex-1 h-[30px] rounded-[4px] text-[13px] transition-colors capitalize"
-            style={
-              activeTab === tab
-                ? { background: ACTIVE_TAB_BG, border: `1px solid ${ACTIVE_TAB_BD}`, color: TEXT_ON, fontWeight: 510 }
-                : { background: 'transparent', border: '1px solid transparent', color: TEXT_OFF, fontWeight: 400 }
-            }
-          >
-            {tab === 'layers' ? 'Layers' : 'Segments'}
-          </button>
-        ))}
+        <div
+          className="flex items-stretch rounded-[6px] p-0"
+          style={{ background: SEG_CONT_BG }}
+        >
+          {(['layers', 'segments'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className="flex-1 rounded-[6px] text-[12px] transition-colors capitalize"
+              style={{
+                height: 32,
+                padding: '5px 10px',
+                fontFamily: 'Inter, sans-serif',
+                fontWeight: 450,
+                ...(activeTab === tab
+                  ? { background: ACTIVE_TAB_BG, border: `1px solid ${ACTIVE_TAB_BD}`, color: TEXT_ON }
+                  : { background: 'transparent', border: '1px solid transparent', color: TEXT_OFF })
+              }}
+            >
+              {tab === 'layers' ? 'Assets' : 'Segments'}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* ── Content panels — both always mounted, fade between them ── */}
-      <div className="flex-1 relative min-h-0 overflow-hidden">
+      <div className="flex-1 relative min-h-0 overflow-hidden" style={{ padding: '0' }}>
 
         {/* Layers panel */}
         <div
@@ -202,6 +230,8 @@ export default function LayersPanel() {
                       isExpanded={isExpanded(row.nodeId)}
                       onToggleExpand={() => toggleExpand(row.nodeId)}
                       onSelect={(isShift, isCtrl) => handleLayerSelect(row.nodeId, isShift, isCtrl)}
+                      isLastChild={treeMeta[virtualItem.index]?.isLastChild ?? true}
+                      showLineAt={treeMeta[virtualItem.index]?.showLineAt ?? []}
                     />
                   </div>
                 );

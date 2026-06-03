@@ -32,7 +32,7 @@ import { SceneNode } from '@/lib/creator/state/sceneSlice';
 import { getWorldMatrix, getBoundingBox, localToScreen, createTransformMatrix, getGroupLocalBounds, getPathLocalBounds, getCollectiveBoundingBox, decomposeMatrix, getAnimatedAnchor, getAnchorOffset } from '@/lib/creator/core/Matrix';
 import { AnimationUtils } from '@/lib/creator/core/Animation';
 import { convertToPath } from '@/lib/creator/core/Convert';
-import { createArtboardNode } from '@/lib/creator/core/SceneNode';
+import { createArtboardNode, createNode, createDefaultTransform } from '@/lib/creator/core/SceneNode';
 import { SVGImporter } from '@/lib/creator/core/SVGImporter';
 import { loadFontCSS } from '@/lib/creator/fonts/GoogleFontsService';
 import {
@@ -773,6 +773,48 @@ export default function CanvasView() {
           setActiveTool('select');
           return;
         }
+
+        // AE/LottieFiles structure: wrap drawn shapes in a layer group.
+        // Result: Rectangle 1 (group) → Rect Shape (rect), same as AE Contents model.
+        // Text is left flat (text layers don't use the AE group-wrapper pattern).
+        const innerShapeNames: Partial<Record<SceneNode['type'], string>> = {
+          rect: 'Rect Shape',
+          ellipse: 'Ellipse Shape',
+          path: 'Path',
+          polystar: 'Star Shape',
+        };
+        const innerName = innerShapeNames[node.type as keyof typeof innerShapeNames];
+
+        if (innerName) {
+          const layerGroup = createNode('group', node.name, {
+            transform: {
+              ...createDefaultTransform(),
+              x: node.transform.x,
+              y: node.transform.y,
+              anchorX: 0,
+              anchorY: 0,
+              rotation: node.transform.rotation || 0,
+              scaleX: node.transform.scaleX ?? 1,
+              scaleY: node.transform.scaleY ?? 1,
+            },
+            inPoint: node.inPoint,
+            outPoint: node.outPoint,
+            children: [node.id],
+            props: { isShapeLayer: true },
+          });
+
+          // Inner shape: positioned at (0,0) within the group; keeps its own anchor for centering
+          node.name = innerName;
+          node.parentId = layerGroup.id;
+          node.transform = { ...node.transform, x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 };
+
+          useCreatorStore.getState().addLayerWithShape(layerGroup, node);
+          setPreviewNode(null);
+          setSelection([layerGroup.id]);
+          setActiveTool('select');
+          return;
+        }
+
         useCreatorStore.getState().addNodeToArtboard(node);
         setPreviewNode(null);
         setSelection([node.id]);
@@ -2675,15 +2717,10 @@ export default function CanvasView() {
 
       // 4. Update Properties
       const updates: any = {};
-      if (node.type === 'rect' || node.type === 'artboard') {
-        updates['props.width'] = node.type === 'artboard' ? Math.round(Math.max(1, finalW)) : Math.max(1, finalW);
-        updates['props.height'] = node.type === 'artboard' ? Math.round(Math.max(1, finalH)) : Math.max(1, finalH);
-
-        if (node.type !== 'artboard') {
-          updates['transform.scaleX'] = initialTransform.scaleX * sgnX;
-          updates['transform.scaleY'] = initialTransform.scaleY * sgnY;
-        }
-
+      if (node.type === 'artboard') {
+        // Artboard: size-based resize (dimensions define the canvas)
+        updates['props.width'] = Math.round(Math.max(1, finalW));
+        updates['props.height'] = Math.round(Math.max(1, finalH));
         if (node.transform.anchorAlignX !== undefined) {
           updates['transform.anchorAlignX'] = node.transform.anchorAlignX;
         } else {
@@ -2694,22 +2731,26 @@ export default function CanvasView() {
         } else {
           updates['transform.anchorY'] = initialTransform.anchorY * Math.abs(ry);
         }
-      } else if (node.type === 'ellipse') {
-        updates['props.radiusX'] = Math.max(0.5, finalW / 2);
-        updates['props.radiusY'] = Math.max(0.5, finalH / 2);
-
-        updates['transform.scaleX'] = initialTransform.scaleX * sgnX;
-        updates['transform.scaleY'] = initialTransform.scaleY * sgnY;
-
+      } else if (node.type === 'rect' || node.type === 'ellipse') {
+        // Scale-based resize: keep geometry (props) unchanged, only adjust transform scale.
+        // This matches AE behavior: bounding-box handles scale the layer, not the shape source.
+        // Children then naturally follow the parent's scale via Lottie/AE parenting rules.
+        const minScale = 0.001;
+        const newScaleX = initialTransform.scaleX * rx;
+        const newScaleY = initialTransform.scaleY * ry;
+        updates['transform.scaleX'] = Math.abs(newScaleX) < minScale ? (newScaleX < 0 ? -minScale : minScale) : newScaleX;
+        updates['transform.scaleY'] = Math.abs(newScaleY) < minScale ? (newScaleY < 0 ? -minScale : minScale) : newScaleY;
+        // Anchor stays at its current relative position (geometry is unchanged, so anchorAlignX=0.5
+        // still resolves to the same local value: props.width/2 for rects, radiusX for ellipses)
         if (node.transform.anchorAlignX !== undefined) {
           updates['transform.anchorAlignX'] = node.transform.anchorAlignX;
         } else {
-          updates['transform.anchorX'] = initialTransform.anchorX * Math.abs(rx);
+          updates['transform.anchorX'] = initialTransform.anchorX;
         }
         if (node.transform.anchorAlignY !== undefined) {
           updates['transform.anchorAlignY'] = node.transform.anchorAlignY;
         } else {
-          updates['transform.anchorY'] = initialTransform.anchorY * Math.abs(ry);
+          updates['transform.anchorY'] = initialTransform.anchorY;
         }
       } else if (node.type === 'path') {
         const initialPoints = (initialProps.points as any[]) || [];
@@ -2802,12 +2843,13 @@ export default function CanvasView() {
       };
 
       const isPointText = node.type === 'text' && !((initialProps?.width as number) > 0);
-      const isGroup = node.type === 'group' || node.type === 'precomp' || node.type === 'image' || isPointText;
+      // Rect/ellipse now use scale-based resize (geometry/props unchanged), same as groups.
+      const isGroup = node.type === 'group' || node.type === 'precomp' || node.type === 'image' || isPointText ||
+        node.type === 'rect' || node.type === 'ellipse';
 
       const v_fixed_new_rel_anchor = {
         // Paths bake the scale/flip into points directly, so use signed rx/ry.
-        // Other shapes (rect/ellipse) bake scale into props but flip into the scale transform.
-        // Groups keep local geometry the same and only scale via the transform.
+        // Rect/ellipse and groups keep local geometry the same; scale handled by transform matrix.
         x: v_fixed_init_rel_anchor.x * (isGroup ? 1 : (node.type === 'path' ? rx : Math.abs(rx))),
         y: v_fixed_init_rel_anchor.y * (isGroup ? 1 : (node.type === 'path' ? ry : Math.abs(ry)))
       };
@@ -2858,17 +2900,37 @@ export default function CanvasView() {
           }
         });
 
+        // Geometry resize = props.width/height/radiusX/Y changed (inspector size edits or old path).
+        // Scale resize = only transform.scale changed (rect/ellipse canvas handles now use this).
+        const isGeometryResize = 'props.width' in updates || 'props.height' in updates ||
+          'props.radiusX' in updates || 'props.radiusY' in updates;
+
+        // For nodes that use anchorAlign (dynamic anchors based on size, e.g. rects with anchorAlignX=0.5),
+        // the anchorX in initialTransform is the OLD size-based value.
+        // - Geometry resize: recompute from new size so nextParentWorld uses correct new coordinate system.
+        // - Scale resize: geometry unchanged, so anchor stays at its initial value.
+        const alignX = updates['transform.anchorAlignX'] ?? interaction.initialTransform.anchorAlignX;
+        const alignY = updates['transform.anchorAlignY'] ?? interaction.initialTransform.anchorAlignY;
+        let resolvedAnchorX = updates['transform.anchorX'] !== undefined ? updates['transform.anchorX'] : interaction.initialTransform.anchorX;
+        let resolvedAnchorY = updates['transform.anchorY'] !== undefined ? updates['transform.anchorY'] : interaction.initialTransform.anchorY;
+        if (alignX === 0.5) resolvedAnchorX = isGeometryResize ? finalW / 2 : (interaction.initialTransform.anchorX ?? 0);
+        else if (alignX === 1) resolvedAnchorX = isGeometryResize ? finalW : (interaction.initialTransform.anchorX ?? 0);
+        else if (alignX === 0) resolvedAnchorX = 0;
+        if (alignY === 0.5) resolvedAnchorY = isGeometryResize ? finalH / 2 : (interaction.initialTransform.anchorY ?? 0);
+        else if (alignY === 1) resolvedAnchorY = isGeometryResize ? finalH : (interaction.initialTransform.anchorY ?? 0);
+        else if (alignY === 0) resolvedAnchorY = 0;
+
         const currentParentTransform = {
           ...interaction.initialTransform,
           x: updates['transform.x'] !== undefined ? updates['transform.x'] : interaction.initialTransform.x,
           y: updates['transform.y'] !== undefined ? updates['transform.y'] : interaction.initialTransform.y,
-          anchorX: updates['transform.anchorX'] !== undefined ? updates['transform.anchorX'] : interaction.initialTransform.anchorX,
-          anchorY: updates['transform.anchorY'] !== undefined ? updates['transform.anchorY'] : interaction.initialTransform.anchorY,
+          anchorX: resolvedAnchorX,
+          anchorY: resolvedAnchorY,
           scaleX: updates['transform.scaleX'] !== undefined ? updates['transform.scaleX'] : interaction.initialTransform.scaleX,
           scaleY: updates['transform.scaleY'] !== undefined ? updates['transform.scaleY'] : interaction.initialTransform.scaleY,
           rotation: updates['transform.rotation'] !== undefined ? updates['transform.rotation'] : interaction.initialTransform.rotation,
-          anchorAlignX: updates['transform.anchorAlignX'] !== undefined ? updates['transform.anchorAlignX'] : interaction.initialTransform.anchorAlignX,
-          anchorAlignY: updates['transform.anchorAlignY'] !== undefined ? updates['transform.anchorAlignY'] : interaction.initialTransform.anchorAlignY,
+          anchorAlignX: alignX,
+          anchorAlignY: alignY,
         };
 
         const nextParentWorld = pOfPWorld.multiply(createTransformMatrix(currentParentTransform, { ...node, props: currentParentProps } as any));
@@ -2878,11 +2940,14 @@ export default function CanvasView() {
           const childNode = nodes.get(childData.id);
           if (!childNode) return;
 
-          // 1. Calculate child's new World Matrix (Group logic: just scale around the fixed point)
-          const childNewWorld = groupScaleMatrix.multiply(childData.worldMatrix);
+          // For geometry resize, use the child's original world matrix to preserve world position.
+          // For scale resize, apply groupScaleMatrix so children scale with the parent.
+          const childWorldMatrix = isGeometryResize
+            ? childData.worldMatrix
+            : groupScaleMatrix.multiply(childData.worldMatrix);
 
-          // 2. Project into the Parent's NEW Local Space
-          const childNewLocal = invNextParentWorld.multiply(childNewWorld);
+          // Project into the Parent's NEW Local Space
+          const childNewLocal = invNextParentWorld.multiply(childWorldMatrix);
 
           // 3. Decompose back to local properties
           const childAnchor = getAnimatedAnchor(childNode, nodes, currentTime);
@@ -3370,17 +3435,45 @@ export default function CanvasView() {
         } else if (node.type === 'rect' || node.type === 'ellipse') {
           // Convert to path for editing
           const points = convertToPath(node);
+          const anchorX = node.transform.anchorX ?? 0;
+          const anchorY = node.transform.anchorY ?? 0;
+          // Center path points at (0,0) so Lottie/ThorVG sh coordinates match Canvas2D rendering.
+          // Canvas2D applies T(-anchorX,-anchorY) from the world matrix; Lottie sh coords are absolute.
+          const centeredPoints = points.map((p: any) => ({ ...p, x: p.x - anchorX, y: p.y - anchorY }));
           updateNode(hitNodeId, {
             type: 'path',
             props: {
               ...node.props,
-              points,
+              points: centeredPoints,
               closed: true
+            },
+            transform: {
+              ...node.transform,
+              anchorX: 0,
+              anchorY: 0,
+              anchorAlignX: undefined,
+              anchorAlignY: undefined,
             }
           });
           setEditingNode(hitNodeId);
         } else if (node.type === 'path') {
-          // Path nodes (including boolean operation results) can be edited directly
+          // Freeze dynamic anchor before editing so vertex drags don't cause anchor drift.
+          // anchorAlignX/Y keeps the anchor at the bbox center — when a vertex moves, the bbox
+          // changes, the anchor shifts, and all other points appear to move in world space.
+          // Freezing it to a static value eliminates that drift without changing appearance.
+          const { anchorAlignX, anchorAlignY } = node.transform;
+          if (anchorAlignX !== undefined || anchorAlignY !== undefined) {
+            const frozenAnchor = getAnimatedAnchor(node, nodes, currentTime);
+            updateNode(hitNodeId, {
+              transform: {
+                ...node.transform,
+                anchorX: frozenAnchor.x,
+                anchorY: frozenAnchor.y,
+                anchorAlignX: undefined,
+                anchorAlignY: undefined,
+              }
+            });
+          }
           setEditingNode(hitNodeId);
         } else if (node.type === 'text') {
           setTextEditState(createTextEditState(hitNodeId, node.props.text || ''));

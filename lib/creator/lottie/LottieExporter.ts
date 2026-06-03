@@ -928,14 +928,19 @@ export class LottieExporter {
                         const childHasStyle = (child.style.fill && child.style.fill !== 'none') || (child.style.stroke && child.style.stroke !== 'none') || (child.style.fillType === 'gradient');
 
                         if (isChildLeaf && childHasStyle) {
-                            // Wrap leaf with its own styles to prevent merge pollution,
-                            // but ensure we don't double-apply the translation since it's already
-                            // baked into Layer ks or the internal shape position (for rect/ellipse).
-                            const leafIt = Array.isArray(childShape) ? [...childShape] : [childShape];
+                            // Zero rc.p/el.p/sr.p so position is not double-applied.
+                            // The full x,y goes into tr.p; tr.s only scales geometry, not position.
+                            const rawLeafIt = Array.isArray(childShape) ? [...childShape] : [childShape];
+                            const leafIt = rawLeafIt.map((s: any) => {
+                                if ((s.ty === 'rc' || s.ty === 'el' || s.ty === 'sr') && s.p !== undefined) {
+                                    return { ...s, p: { a: 0, k: [0, 0] } };
+                                }
+                                return s;
+                            });
                             LottieExporter.addStylesToIt(child, nodes, leafIt);
 
-                            // We preserve rotation and scale, but zero out position and anchor to prevent shifts.
-                            const wrapperTransform = { ...child.transform, x: 0, y: 0, anchorX: 0, anchorY: 0 };
+                            // Preserve x,y in wrapper transform — only zero anchor so scale doesn't shift position.
+                            const wrapperTransform = { ...child.transform, anchorX: 0, anchorY: 0 };
                             leafIt.push({ ty: 'tr', nm: 'Transform', ...LottieExporter.mapTransform(child, nodes, wrapperTransform) });
                             it.push({ ty: 'gr', nm: child.name || 'Path Group', it: leafIt });
                             // Leaf is wrapped in gr — no raw shape primitive lands in `it`
@@ -1589,7 +1594,10 @@ export class LottieExporter {
             const kf = kfX || kfY;
 
             let rawVal: any;
-            if (animX && animY && Array.isArray(staticValue)) {
+            if ((animX || animY) && Array.isArray(staticValue)) {
+                // Even when only one axis is animated, always produce an array so the output
+                // format matches what Lottie players expect (e.g. ks.s must be [sx,sy,sz]).
+                // getAtTime with undefined animation returns the static fallback value.
                 const vx = LottieExporter.getAtTime(animX, time, staticValue[0]);
                 const vy = LottieExporter.getAtTime(animY, time, staticValue[1]);
                 rawVal = [LottieExporter.safeNum(vx), LottieExporter.safeNum(vy)];

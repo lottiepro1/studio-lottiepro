@@ -194,7 +194,15 @@ export const createClipboardSlice: StateCreator<CreatorStore, [["zustand/immer",
                 // Duplicate layer names cause ThorVG rendering artifacts (broken clipping, wrong bbox).
                 const dupNode = newNodes.get(duplicatedId);
                 if (dupNode && dupNode.name) {
-                    newNodes.set(duplicatedId, { ...dupNode, name: uniqueName(dupNode.name, newNodes) });
+                    newNodes.set(duplicatedId, {
+                        ...dupNode,
+                        name: uniqueName(dupNode.name, newNodes),
+                        transform: {
+                            ...dupNode.transform,
+                            x: (dupNode.transform.x || 0) + 10,
+                            y: (dupNode.transform.y || 0) + 10,
+                        }
+                    });
                 }
                 topLevelDuplicatedIds.push(duplicatedId);
 

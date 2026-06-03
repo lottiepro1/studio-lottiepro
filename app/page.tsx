@@ -8,7 +8,6 @@ import Navbar from "./components/Toolbar/Navbar";
 import LayersPanel from "./components/Layers/LayersPanel";
 import InspectorPanel from "./components/Inspector/InspectorPanel";
 import TimelinePanel from "./components/Timeline/TimelinePanel";
-import StatusBar from "./components/StatusBar";
 import ResizablePanel from "./components/Layout/ResizablePanel";
 import { AlertTriangle, FileJson, Zap } from "lucide-react";
 import { extractGlyphsForScene } from "@/lib/creator/text/GlyphExtractor";
@@ -323,6 +322,8 @@ export default function CreatorPage() {
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [leftPanelWidth,  setLeftPanelWidth]  = useState(320);
+  const [rightPanelWidth, setRightPanelWidth] = useState(288);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [exportSettings, setExportSettings] = useState({
     filename: "animation",
@@ -859,6 +860,8 @@ export default function CreatorPage() {
           setExportSettings((prev) => ({ ...prev, format }));
           setShowSettingsModal(true);
         }}
+        leftPanelWidth={creatorMode === 'animate' ? leftPanelWidth : 0}
+        rightPanelWidth={rightPanelWidth}
       />
 
       {/* ── Main Workspace ───────────────────────────────────── */}
@@ -871,10 +874,11 @@ export default function CreatorPage() {
             {creatorMode === "animate" && (
               <ResizablePanel
                 direction="horizontal"
-                initialSize={260}
+                initialSize={320}
                 minSize={180}
                 maxSize={400}
                 side="right"
+                onResize={setLeftPanelWidth}
                 className="border-r border-white/[0.06] h-full"
                 style={{ background: "var(--bg-panel)" } as React.CSSProperties}
               >
@@ -909,10 +913,11 @@ export default function CreatorPage() {
             {/* Inspector / Inputs panel */}
             <ResizablePanel
               direction="horizontal"
-              initialSize={310}
+              initialSize={288}
               minSize={240}
               maxSize={500}
               side="left"
+              onResize={setRightPanelWidth}
               className="border-l border-white/[0.06] h-full"
               style={{ background: "var(--bg-panel)" } as React.CSSProperties}
             >
@@ -955,7 +960,7 @@ export default function CreatorPage() {
               className="h-full outline-none"
             >
               {creatorMode === "animate" ? (
-                <TimelinePanel />
+                <TimelinePanel sidebarWidth={leftPanelWidth} />
               ) : (
                 <StateMachinePanel />
               )}
@@ -964,7 +969,6 @@ export default function CreatorPage() {
         </div>
       </div>
 
-      <StatusBar />
       <SegmentsPanel />
       <DiscoverLogosModal />
 
