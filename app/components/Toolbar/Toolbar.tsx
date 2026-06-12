@@ -4,7 +4,7 @@ import { useCreatorStore } from '@/lib/creator/state/store';
 import { MousePointer2, Square, Circle, PenTool, Type, Image as ImageIcon, GripHorizontal, Compass, Star } from 'lucide-react';
 import { useRef } from 'react';
 import { createImageNode } from '@/lib/creator/core/SceneNode';
-import { SVGImporter } from '@/lib/creator/core/SVGImporter';
+import { SvgImporter } from '@/lib/creator/svg/SvgImporter';
 import { getPathLocalBounds, getCollectiveBoundingBox, getAnchorOffset } from '@/lib/creator/core/Matrix';
 import { SceneNode } from '@/lib/creator/state/sceneSlice';
 
@@ -55,12 +55,18 @@ export default function Toolbar() {
       try {
         const text = await file.text();
         const duration = artboard?.props.duration || 100000;
-        const importedNodes = await SVGImporter.importFromString(text, duration);
+        const importedNodes = await SvgImporter.importFromString(text, duration);
         console.log(`🔹 SVG parsed: ${importedNodes.length} nodes (Duration: ${duration})`);
 
-        const topLevelIds = importedNodes.filter(n => !n.parentId).map(n => n.id);
+        // Placeable = the single root node to center on canvas. Comp artboards
+        // (precomp-mode assets, reached via refId) must NOT be placed or centered.
+        const isPlaceable = (n: SceneNode) => !n.parentId && n.type !== 'artboard';
+        const topLevelIds = importedNodes.filter(isPlaceable).map(n => n.id);
         const nodesMap = new Map(importedNodes.map(n => [n.id, n]));
-        const bounds = getCollectiveBoundingBox(topLevelIds, nodesMap);
+        const svgRoot = importedNodes.find(isPlaceable);
+        const bounds = svgRoot?.props?._svgW
+          ? { x: 0, y: 0, width: svgRoot.props._svgW as number, height: svgRoot.props._svgH as number }
+          : getCollectiveBoundingBox(topLevelIds, nodesMap);
 
         const contentWidth = bounds.width;
         const contentHeight = bounds.height;
@@ -70,7 +76,7 @@ export default function Toolbar() {
         // Apply offset and parent
         if (isFinite(offsetX) && isFinite(offsetY)) {
           importedNodes.forEach(n => {
-            if (!n.parentId) {
+            if (isPlaceable(n)) {
               n.parentId = artboardId;
               n.transform.x += offsetX;
               n.transform.y += offsetY;
@@ -90,7 +96,7 @@ export default function Toolbar() {
             if (Math.abs(scale - 1) > 0.01) {
               console.log(`📉 Auto-scaling SVG by ${scale.toFixed(2)} to fit artboard`);
               importedNodes.forEach(n => {
-                if (!n.parentId || n.parentId === artboardId) {
+                if ((isPlaceable(n) || n.parentId === artboardId) && n.type !== 'artboard') {
                   // Scale position relative to center
                   const dx = n.transform.x - centerX;
                   const dy = n.transform.y - centerY;
@@ -107,7 +113,7 @@ export default function Toolbar() {
         } else {
           // Fallback if bounds calc failed (e.g. paths without width props)
           importedNodes.forEach(n => {
-            if (!n.parentId) n.parentId = artboardId;
+            if (isPlaceable(n)) n.parentId = artboardId;
           });
         }
 

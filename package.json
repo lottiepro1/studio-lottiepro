@@ -42,6 +42,7 @@
     "@types/paper": "^0.11.14",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/svg-path-parser": "^1.1.6",
     "adm-zip": "^0.5.16",
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",

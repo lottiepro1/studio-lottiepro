@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, memo } from 'react';
 import { useCreatorStore } from '@/lib/creator/state/store';
 import { ChevronRight } from 'lucide-react';
-import { Eye, EyeSlash, Lock, LockOpen, RectangleDashed, BoundingBox, Star as PhStar } from '@phosphor-icons/react';
+import { Eye, EyeSlash, Lock, LockOpen, RectangleDashed, BoundingBox, Star as PhStar, CircleHalf } from '@phosphor-icons/react';
 
 // ── Design tokens (exact from Figma) ─────────────────────────────────────────
 const NAME_COLOR     = '#FFFFFF';
@@ -104,6 +104,11 @@ export const LayerItem = memo(function LayerItem({
   const updateNode = useCreatorStore(s => s.updateNode);
   const moveNode   = useCreatorStore(s => s.moveNode);
   const setActiveArtboard = useCreatorStore(s => s.setActiveArtboard);
+  // Matte relationship (track matte): name of the matte source that clips this layer
+  const matteSourceName = useCreatorStore(s => {
+    const n = s.nodes.get(nodeId);
+    return n?.matteSourceId ? s.nodes.get(n.matteSourceId)?.name : undefined;
+  });
 
   const [isEditing, setIsEditing]   = useState(false);
   const [tempName,  setTempName]    = useState(node?.name || '');
@@ -363,6 +368,19 @@ export const LayerItem = memo(function LayerItem({
           </span>
         )}
       </div>
+
+      {/* Matte indicator — this layer is clipped by a matte, or IS a matte source */}
+      {(node.matteSourceId || (node.matteTargetIds && node.matteTargetIds.length > 0)) && (
+        <div
+          className="flex items-center justify-center shrink-0"
+          style={{ width: btnSz, height: btnSz, color: node.matteSourceId ? ICON_DIM : 'var(--accent)' }}
+          title={node.matteSourceId
+            ? `Clipped by "${matteSourceName ?? 'Mask'}"`
+            : `Matte — clips ${node.matteTargetIds!.length} layer${node.matteTargetIds!.length === 1 ? '' : 's'}`}
+        >
+          <CircleHalf size={btnIconSz} weight="fill" />
+        </div>
+      )}
 
       {/* Divider before lock icon */}
       <div style={{ width: 2, alignSelf: 'stretch', background: '#2C2C2C', flexShrink: 0 }} className={`transition-opacity ${node.locked || isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`} />

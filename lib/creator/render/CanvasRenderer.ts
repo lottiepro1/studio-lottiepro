@@ -3,6 +3,7 @@ import { createTransformMatrix, getWorldMatrix, getBoundingBox } from '../core/M
 import { AnimationUtils } from '../core/Animation';
 import { VectorPoint } from '../tools/PenTool';
 import { PathUtils } from '../core/PathUtils';
+import { AE_BLUR_TO_SIGMA } from '../core/Convert';
 import { wrapLines } from '../text/wrapLines';
 
 // Type alias for contexts that work in both main thread and Worker
@@ -1075,6 +1076,33 @@ export class CanvasRenderer {
     }
   }
 
+  // Used for SVG-imported gradients that carry a gradient-local → viewport transform.
+  // Called after ctx.transform(gradient.transform) has already been applied.
+  private createImportedGradient(gradient: any): CanvasGradient {
+    let g: CanvasGradient;
+    if (gradient.type === 'radial') {
+      const cx = gradient.start?.x ?? 0;
+      const cy = gradient.start?.y ?? 0;
+      const fx = gradient.focal?.x ?? cx;
+      const fy = gradient.focal?.y ?? cy;
+      const r  = Math.max(0.0001, gradient.radius ?? 1);
+      g = this.ctx.createRadialGradient(fx, fy, 0, cx, cy, r);
+    } else {
+      g = this.ctx.createLinearGradient(
+        gradient.start?.x ?? 0, gradient.start?.y ?? 0,
+        gradient.end?.x   ?? 1, gradient.end?.y   ?? 0,
+      );
+    }
+    const stops = Array.isArray(gradient.stops) ? [...gradient.stops].sort((a: any, b: any) => a.offset - b.offset) : [];
+    if (stops.length === 0) {
+      g.addColorStop(0, 'rgba(0,0,0,0)');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+    } else {
+      stops.forEach((s: any) => g.addColorStop(Math.max(0, Math.min(1, s.offset ?? 0)), this.hexToRgba(s.color || '#000000', s.opacity ?? 1)));
+    }
+    return g;
+  }
+
   private createCanvasGradient(gradient: any): CanvasGradient {
     let canvasGradient: CanvasGradient;
 
@@ -1135,7 +1163,9 @@ export class CanvasRenderer {
 
       if (effect.type === 'blur') {
         const blurAmount = AnimationUtils.getPropertyValue(node, `${prefix}.blur`, currentTime) ?? effect.blur;
-        filters.push(`blur(${blurAmount}px)`);
+        // Effect.blur is AE Blurriness; CSS blur(px) takes a sigma — convert so
+        // Canvas2D matches the ThorVG render (sigma = blurriness * 0.3).
+        filters.push(`blur(${(blurAmount as number) * AE_BLUR_TO_SIGMA}px)`);
       } else if (effect.type === 'shadow') {
         const color = AnimationUtils.getPropertyValue(node, `${prefix}.color`, currentTime) ?? effect.color ?? '#000000';
         const opacity = AnimationUtils.getPropertyValue(node, `${prefix}.opacity`, currentTime) ?? effect.opacity ?? 1;
@@ -1150,7 +1180,7 @@ export class CanvasRenderer {
         const dx = Math.cos(angleRad) * (distance as number);
         const dy = Math.sin(angleRad) * (distance as number);
 
-        filters.push(`drop-shadow(${dx}px ${dy}px ${blur}px ${shadowColor})`);
+        filters.push(`drop-shadow(${dx}px ${dy}px ${(blur as number) * AE_BLUR_TO_SIGMA}px ${shadowColor})`);
       }
     });
 
@@ -1190,8 +1220,18 @@ export class CanvasRenderer {
         if (fillGradient) {
           this.ctx.save();
           this.ctx.globalAlpha *= fillOpacity;
-          this.ctx.fillStyle = this.createCanvasGradient(fillGradient);
-          this.ctx.fill(fillRule);
+          if (fillGradient.transform) {
+            // SVG-imported gradient: clip to path, apply gradient matrix, flood fill.
+            // This correctly renders rotated/skewed/elliptical radial gradients.
+            this.ctx.clip(fillRule);
+            const [a, b, c, d, e, f] = fillGradient.transform;
+            this.ctx.transform(a, b, c, d, e, f);
+            this.ctx.fillStyle = this.createImportedGradient(fillGradient);
+            this.ctx.fillRect(-1e6, -1e6, 2e6, 2e6);
+          } else {
+            this.ctx.fillStyle = this.createCanvasGradient(fillGradient);
+            this.ctx.fill(fillRule);
+          }
           this.ctx.restore();
         }
       }

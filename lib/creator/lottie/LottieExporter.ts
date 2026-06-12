@@ -729,10 +729,55 @@ export class LottieExporter {
         return transform;
     }
 
+    // A path node stores multi-subpath geometry (islands/holes) as ONE concatenated
+    // points array split by props.subPathLengths (SvgImporter and LottieParser both
+    // produce this; CanvasRenderer/PathUtils split it the same way when drawing).
+    // Lottie has no subpath concept inside a single sh — concatenating them into one
+    // bezier draws phantom edges connecting the islands. Emit one sh PER subpath;
+    // sibling sh items share the group's fill/stroke, which matches SVG semantics
+    // (fill-rule applies across all sh in the group in ThorVG/AE alike).
+    private static buildPathShapeItems(node: SceneNode): any[] {
+        const points: any[] = node.props?.points || [];
+        const lengths: number[] | undefined = node.props?.subPathLengths;
+        const anim = node.animations?.['props.points'];
+        const total = lengths?.reduce((a, b) => a + b, 0);
+        if (!lengths || lengths.length <= 1 || total !== points.length) {
+            return [{
+                ty: 'sh', nm: node.name || 'Path',
+                ks: LottieExporter.mapProperty(node.props?.points, anim)
+            }];
+        }
+        const slicePts = (v: any, s: number, e: number): any => {
+            if (Array.isArray(v)) return v.slice(s, e);
+            if (v && Array.isArray(v.points)) return { ...v, points: v.points.slice(s, e) };
+            return v;
+        };
+        const items: any[] = [];
+        let start = 0;
+        for (let i = 0; i < lengths.length; i++) {
+            const end = start + lengths[i];
+            const s = start, e = end; // capture for the keyframe mapper
+            // Keyframed points hold the full concatenated array per keyframe; the
+            // subpath structure is static, so each keyframe slices identically.
+            const slicedAnim = anim?.map(k => ({ ...k, value: slicePts(k.value, s, e) }));
+            items.push({
+                ty: 'sh', nm: (node.name || 'Path') + (i > 0 ? ` ${i + 1}` : ''),
+                ks: LottieExporter.mapProperty(
+                    { points: points.slice(s, e), closed: node.props?.closed ?? true },
+                    slicedAnim,
+                ),
+            });
+            start = end;
+        }
+        return items;
+    }
 
     private static mapNodeToShape(node: SceneNode, nodes: Map<string, SceneNode>, isLayerRoot: boolean = false): any[] | LottieShape | null {
         let it: any[] = [];
         let pathItem: any;
+        // Path nodes may carry several subpaths (islands/holes) concatenated in one
+        // points array (split by props.subPathLengths) — emitted as MULTIPLE sh items.
+        let pathItems: any[] | null = null;
 
         const hasChildren = node.children && node.children.length > 0;
         const isLeafShape = !hasChildren && (node.type === 'rect' || node.type === 'ellipse' || node.type === 'path' || node.type === 'polystar');
@@ -806,17 +851,16 @@ export class LottieExporter {
             if (pathItem.p.a === 0 && Array.isArray(pathItem.p.k) && pathItem.p.k.every((v: number) => v === 0)) delete pathItem.p;
             if (pathItem.r.a === 0 && pathItem.r.k === 0) delete pathItem.r;
         } else if (node.type === 'path') {
-            pathItem = {
-                ty: 'sh', nm: node.name || 'Path',
-                ks: LottieExporter.mapProperty(node.props?.points, node.animations?.['props.points'])
-            };
+            pathItems = LottieExporter.buildPathShapeItems(node);
+            pathItem = pathItems[0];
         }
 
+        let layerLeafGradientWrapped = false;
         if (isLeafShape && pathItem) {
             const hasRoundnessAnim = node.animations?.['props.roundness'] && node.animations['props.roundness'].length > 0;
             if (!isLayerRoot) {
                 // Non-layer leaf shape: return just geometry (parent group handles styles)
-                let shapes = [pathItem];
+                let shapes = pathItems ? [...pathItems] : [pathItem];
                 if ((LottieExporter.safeNum(node.props?.roundness, 0) > 0) || hasRoundnessAnim) {
                     shapes.push({
                         ty: 'rd', nm: 'Rounded Corners',
@@ -827,12 +871,29 @@ export class LottieExporter {
             }
             // Layer root leaf shape: push geometry into `it` and fall through
             // to the layer root section below which adds fill/stroke styles + transform
-            it.push(pathItem);
+            if (pathItems) it.push(...pathItems); else it.push(pathItem);
             if ((LottieExporter.safeNum(node.props?.roundness, 0) > 0) || hasRoundnessAnim) {
                 it.push({
                     ty: 'rd', nm: 'Rounded Corners',
                     r: LottieExporter.mapProperty(LottieExporter.safeNum(node.props.roundness, 0), node.animations?.['props.roundness'])
                 });
+            }
+
+            // Elliptical/skewed SVG radial gradients on LAYER-ROOT path leaves (layered
+            // import mode): apply the same exact-reproduction wrap used for group children
+            // below. Without this, layer leaves fall back to the circular approximation in
+            // bakeImportedGradient and gradient colors land in the wrong places — visible
+            // as hard seams where overlapping shapes should blend (e.g. gradient logos).
+            // Only when `it` is exactly the bare sh geometry (no rd) — the wrap inverse-
+            // transforms sh items and would silently drop anything else. Multi-subpath
+            // paths emit several sh items; the wrap maps over all of them.
+            if (node.type === 'path' && it.length > 0 && it.every((x: any) => x?.ty === 'sh')) {
+                const ellipticalItems = LottieExporter.tryBuildEllipticalGradientWrap(node, nodes, it);
+                if (ellipticalItems) {
+                    it.length = 0;
+                    it.push(...ellipticalItems);
+                    layerLeafGradientWrapped = true;
+                }
             }
 
             // ── Two-group outside stroke (rect / ellipse only, static dims + static strokeWidth) ──
@@ -931,13 +992,21 @@ export class LottieExporter {
                             // Zero rc.p/el.p/sr.p so position is not double-applied.
                             // The full x,y goes into tr.p; tr.s only scales geometry, not position.
                             const rawLeafIt = Array.isArray(childShape) ? [...childShape] : [childShape];
-                            const leafIt = rawLeafIt.map((s: any) => {
+                            let leafIt = rawLeafIt.map((s: any) => {
                                 if ((s.ty === 'rc' || s.ty === 'el' || s.ty === 'sr') && s.p !== undefined) {
                                     return { ...s, p: { a: 0, k: [0, 0] } };
                                 }
                                 return s;
                             });
-                            LottieExporter.addStylesToIt(child, nodes, leafIt);
+
+                            // Elliptical/skewed SVG radial gradients: exact reproduction via
+                            // inverse-transformed geometry in nested groups (see helper docs).
+                            const ellipticalItems = LottieExporter.tryBuildEllipticalGradientWrap(child, nodes, leafIt);
+                            if (ellipticalItems) {
+                                leafIt = ellipticalItems;
+                            } else {
+                                LottieExporter.addStylesToIt(child, nodes, leafIt);
+                            }
 
                             // Preserve x,y in wrapper transform — only zero anchor so scale doesn't shift position.
                             const wrapperTransform = { ...child.transform, anchorX: 0, anchorY: 0 };
@@ -972,7 +1041,9 @@ export class LottieExporter {
         // renders as a solid-color rectangle covering the entire layer area.
         // Exception: boolean merge groups always need a fill to color the merged result.
         const isMergeNode = !!(node.mergeMode && node.mergeMode !== 'none');
-        const shouldEmitStyles = hasUnwrappedShapesInIt || (!hasChildren && isLayerRoot) || isMergeNode;
+        // layerLeafGradientWrapped: the elliptical wrap already contains the gradient fill
+        // (and stroke group) — emitting styles again would paint over the whole layer.
+        const shouldEmitStyles = (hasUnwrappedShapesInIt || (!hasChildren && isLayerRoot) || isMergeNode) && !layerLeafGradientWrapped;
         if (shouldEmitStyles) {
             LottieExporter.addStylesToIt(node, nodes, it, true); // skipTrim=true — emitted separately below
         }
@@ -1077,18 +1148,21 @@ export class LottieExporter {
                     ...kf,
                     value: kf.value ? LottieExporter.mapGradient(kf.value, gradHasAlpha) : kf.value
                 }));
+                // SVG-imported gradients carry a transform matrix that must be baked
+                // into the coordinates (Lottie has no gradient-transform concept).
+                const baked = LottieExporter.bakeImportedGradient(grad);
                 const fill: any = {
                     ty: 'gf', nm: 'Gradient Fill',
                     o: LottieExporter.mapProperty(LottieExporter.safeNum(node.style.fillOpacity, 1) * 100, node.animations?.['style.fillOpacity']?.map(k => ({ ...k, value: k.value * 100 }))),
-                    s: LottieExporter.mapProperty([grad.start.x, grad.start.y], anim?.map(k => ({ ...k, value: [k.value.start.x, k.value.start.y] }))),
-                    e: LottieExporter.mapProperty([grad.end.x, grad.end.y], anim?.map(k => ({ ...k, value: [k.value.end.x, k.value.end.y] }))),
+                    s: baked ? { a: 0, k: baked.s } : LottieExporter.mapProperty([grad.start.x, grad.start.y], anim?.map(k => ({ ...k, value: [k.value.start.x, k.value.start.y] }))),
+                    e: baked ? { a: 0, k: baked.e } : LottieExporter.mapProperty([grad.end.x, grad.end.y], anim?.map(k => ({ ...k, value: [k.value.end.x, k.value.end.y] }))),
                     t: grad.type === 'linear' ? 1 : 2,
                     g: { p: stopCount, k: LottieExporter.mapProperty(gradFlat, animFlat) },
                     r: node.style.fillRule === 'evenodd' ? 2 : 1
                 };
                 if (grad.type === 'radial') {
-                    fill.h = LottieExporter.mapProperty(grad.highlightLength ?? 0, anim?.map(k => ({ ...k, value: k.value.highlightLength ?? 0 })));
-                    fill.a = LottieExporter.mapProperty(grad.highlightAngle ?? 0, anim?.map(k => ({ ...k, value: k.value.highlightAngle ?? 0 })));
+                    fill.h = baked ? { a: 0, k: baked.h ?? 0 } : LottieExporter.mapProperty(grad.highlightLength ?? 0, anim?.map(k => ({ ...k, value: k.value.highlightLength ?? 0 })));
+                    fill.a = baked ? { a: 0, k: baked.a ?? 0 } : LottieExporter.mapProperty(grad.highlightAngle ?? 0, anim?.map(k => ({ ...k, value: k.value.highlightAngle ?? 0 })));
                 }
                 if (fill.o.a === 0 && fill.o.k === 100) delete fill.o;
                 if (fill.r === 1) delete fill.r;
@@ -1118,12 +1192,13 @@ export class LottieExporter {
                     ...kf,
                     value: kf.value ? LottieExporter.mapGradient(kf.value, gradHasAlpha) : kf.value
                 }));
+                const baked = LottieExporter.bakeImportedGradient(grad);
                 const stroke: any = {
                     ty: 'gs', nm: 'Gradient Stroke',
                     o: LottieExporter.mapProperty(LottieExporter.safeNum(node.style.strokeOpacity, 1) * 100, node.animations?.['style.strokeOpacity']?.map(k => ({ ...k, value: k.value * 100 }))),
                     w: LottieExporter.mapProperty(effectiveStrokeWidth, node.animations?.['style.strokeWidth']),
-                    s: LottieExporter.mapProperty([grad.start.x, grad.start.y], anim?.map(k => ({ ...k, value: [k.value.start.x, k.value.start.y] }))),
-                    e: LottieExporter.mapProperty([grad.end.x, grad.end.y], anim?.map(k => ({ ...k, value: [k.value.end.x, k.value.end.y] }))),
+                    s: baked ? { a: 0, k: baked.s } : LottieExporter.mapProperty([grad.start.x, grad.start.y], anim?.map(k => ({ ...k, value: [k.value.start.x, k.value.start.y] }))),
+                    e: baked ? { a: 0, k: baked.e } : LottieExporter.mapProperty([grad.end.x, grad.end.y], anim?.map(k => ({ ...k, value: [k.value.end.x, k.value.end.y] }))),
                     t: grad.type === 'linear' ? 1 : 2,
                     g: { p: stopCount, k: LottieExporter.mapProperty(gradFlat, animFlat) },
                     lc: node.style.strokeLinecap === 'butt' ? 1 : (node.style.strokeLinecap === 'square' ? 3 : 2),
@@ -1131,8 +1206,8 @@ export class LottieExporter {
                     ml: 4
                 };
                 if (grad.type === 'radial') {
-                    stroke.h = LottieExporter.mapProperty(grad.highlightLength ?? 0, anim?.map(k => ({ ...k, value: k.value.highlightLength ?? 0 })));
-                    stroke.a = LottieExporter.mapProperty(grad.highlightAngle ?? 0, anim?.map(k => ({ ...k, value: k.value.highlightAngle ?? 0 })));
+                    stroke.h = baked ? { a: 0, k: baked.h ?? 0 } : LottieExporter.mapProperty(grad.highlightLength ?? 0, anim?.map(k => ({ ...k, value: k.value.highlightLength ?? 0 })));
+                    stroke.a = baked ? { a: 0, k: baked.a ?? 0 } : LottieExporter.mapProperty(grad.highlightAngle ?? 0, anim?.map(k => ({ ...k, value: k.value.highlightAngle ?? 0 })));
                 }
                 if (stroke.o.a === 0 && stroke.o.k === 100) delete stroke.o;
                 strokeItems.push(stroke);
@@ -1458,6 +1533,197 @@ export class LottieExporter {
     }
 
     /**
+     * Decompose a 2×2 linear map (SVG order: x' = a·x + c·y, y' = b·x + d·y) into
+     * A = R(phi) · diag(s1, s2) · R(theta), with R = [cos −sin; sin cos].
+     * s2 < 0 encodes a reflection. Exact for every invertible matrix (SVD form).
+     */
+    private static decomposeLinear(a: number, b: number, c: number, d: number): { phi: number; theta: number; s1: number; s2: number } {
+        const E = (a + d) / 2, F = (a - d) / 2;
+        const G = (b + c) / 2, H = (b - c) / 2;
+        const Q = Math.hypot(E, H), R = Math.hypot(F, G);
+        const s1 = Q + R, s2 = Q - R;
+        const a1 = Math.atan2(G, F), a2 = Math.atan2(H, E);
+        return { phi: (a2 + a1) / 2, theta: (a2 - a1) / 2, s1, s2 };
+    }
+
+    /**
+     * Exact export of SVG elliptical/skewed radial gradients.
+     *
+     * Lottie's gf cannot represent an elliptical radial directly, so for imported
+     * radials with an anisotropic transform we reproduce the gradient exactly:
+     *   1. inverse-transform the path geometry into gradient-local space (where the
+     *      gradient is a perfect circle),
+     *   2. emit a circular gf there,
+     *   3. re-apply the matrix with two nested groups using A = R(phi)·S·R(theta) —
+     *      a Lottie tr composes translate·rotate·scale natively, so the outer group
+     *      carries T·R(phi)·S and the inner group carries R(theta). No skew needed.
+     *
+     * Returns the replacement `it` entries (gradient wrapper + optional stroke group
+     * on the original geometry), or null when not applicable — callers must then use
+     * the regular addStylesToIt path (with the circular approximation fallback).
+     */
+    private static tryBuildEllipticalGradientWrap(node: SceneNode, nodes: Map<string, SceneNode>, leafIt: any[]): any[] | null {
+        if (node.type !== 'path') return null;
+        const style = node.style;
+        if (style.fillVisible === false || style.fillType !== 'gradient' || !style.fillGradient) return null;
+        const grad: any = style.fillGradient;
+        if (grad.type !== 'radial') return null;
+        const m = grad.transform;
+        if (!Array.isArray(m) || m.length !== 6) return null;
+        // Animated gradients/points can't be statically inverse-baked
+        if (node.animations?.['style.fillGradient']?.length) return null;
+        if (node.animations?.['props.points']?.length) return null;
+        // Trim must stay adjacent to the visible geometry — bail to the regular path
+        if ((style.trimStart ?? 0) !== 0 || (style.trimEnd ?? 1) !== 1 || (style.trimOffset ?? 0) !== 0) return null;
+
+        const [a, b, c, d, e, f] = m.map((v: any) => LottieExporter.safeNum(v));
+        const det = a * d - b * c;
+        if (Math.abs(det) < 1e-9) return null;
+
+        const { phi, theta, s1, s2 } = LottieExporter.decomposeLinear(a, b, c, d);
+        // Near-conformal transforms (uniform scale ± rotation/reflection) are already
+        // exact via the circle baking in bakeImportedGradient — skip the wrapper.
+        if (Math.abs(Math.abs(s1) - Math.abs(s2)) <= 0.005 * Math.max(Math.abs(s1), Math.abs(s2))) return null;
+
+        // Only static single-keyframe geometry can be inverse-transformed
+        const shItems = leafIt.filter(item => item?.ty === 'sh');
+        if (shItems.length === 0) return null;
+        if (shItems.some(sh => sh.ks?.a !== 0 || !sh.ks?.k?.v)) return null;
+
+        const invPoint = (x: number, y: number): [number, number] => [
+            (d * (x - e) - c * (y - f)) / det,
+            (-b * (x - e) + a * (y - f)) / det,
+        ];
+        const invVec = (x: number, y: number): [number, number] => [
+            (d * x - c * y) / det,
+            (-b * x + a * y) / det,
+        ];
+        const shInv = shItems.map(sh => ({
+            ...sh,
+            ks: {
+                a: 0,
+                k: {
+                    v: sh.ks.k.v.map((p: number[]) => invPoint(p[0], p[1])),
+                    i: sh.ks.k.i.map((p: number[]) => invVec(p[0], p[1])),
+                    o: sh.ks.k.o.map((p: number[]) => invVec(p[0], p[1])),
+                    c: sh.ks.k.c,
+                },
+            },
+        }));
+
+        // Circular gf in gradient-local space
+        const { base: gradNorm, stopCount, hasAlpha } = LottieExporter.normalizeGradientSet(grad, undefined);
+        const gradFlat = LottieExporter.mapGradient(gradNorm, hasAlpha);
+        const cx = LottieExporter.safeNum(grad.start?.x, 0.5);
+        const cy = LottieExporter.safeNum(grad.start?.y, 0.5);
+        const r = Math.max(1e-4, LottieExporter.safeNum(grad.radius, 0.5));
+        const fx = LottieExporter.safeNum(grad.focal?.x, cx);
+        const fy = LottieExporter.safeNum(grad.focal?.y, cy);
+        const fdist = Math.hypot(fx - cx, fy - cy);
+        const gf: any = {
+            ty: 'gf', nm: 'Gradient Fill',
+            o: { a: 0, k: LottieExporter.safeNum(style.fillOpacity, 1) * 100 },
+            s: { a: 0, k: [cx, cy] },
+            e: { a: 0, k: [cx + r, cy] },
+            t: 2,
+            h: { a: 0, k: fdist > 1e-6 ? Math.min(99, (fdist / r) * 100) : 0 },
+            a: { a: 0, k: fdist > 1e-6 ? Math.atan2(fy - cy, fx - cx) * 180 / Math.PI : 0 },
+            g: { p: stopCount, k: { a: 0, k: gradFlat } },
+            r: style.fillRule === 'evenodd' ? 2 : 1,
+        };
+
+        const deg = (rad: number) => rad * 180 / Math.PI;
+        const innerGr = {
+            ty: 'gr', nm: 'Gradient Space',
+            it: [
+                ...shInv, gf,
+                { ty: 'tr', p: { a: 0, k: [0, 0] }, a: { a: 0, k: [0, 0] }, s: { a: 0, k: [100, 100] }, r: { a: 0, k: deg(theta) }, o: { a: 0, k: 100 } },
+            ],
+        };
+        const outerGr = {
+            ty: 'gr', nm: 'Gradient Transform',
+            it: [
+                innerGr,
+                { ty: 'tr', p: { a: 0, k: [e, f] }, a: { a: 0, k: [0, 0] }, s: { a: 0, k: [s1 * 100, s2 * 100] }, r: { a: 0, k: deg(phi) }, o: { a: 0, k: 100 } },
+            ],
+        };
+
+        const out: any[] = [outerGr];
+        // Stroke (if any) uses the ORIGINAL geometry so its width isn't distorted by the wrapper scale
+        if (style.stroke && style.stroke !== 'none' && (style.strokeWidth || 0) > 0) {
+            const strokeIt: any[] = shItems.map(sh => ({ ...sh }));
+            LottieExporter.addStylesToIt(node, nodes, strokeIt, true, { onlyStroke: true });
+            strokeIt.push({ ty: 'tr', p: { a: 0, k: [0, 0] }, a: { a: 0, k: [0, 0] }, s: { a: 0, k: [100, 100] }, r: { a: 0, k: 0 }, o: { a: 0, k: 100 } });
+            out.push({ ty: 'gr', nm: 'Stroke', it: strokeIt });
+        }
+        return out;
+    }
+
+    /**
+     * Bake an SVG-imported gradient's transform matrix into Lottie-representable
+     * start/end coordinates. Imported gradients store geometry in gradient-local space
+     * plus a 2×3 affine matrix (gradient-local → shape-local); Lottie gf/gs has no
+     * gradient-transform concept, so the matrix must be baked into the coordinates here.
+     * Returns null for native editor gradients (no transform) — those already store
+     * start/end in shape space and keep the existing export path.
+     */
+    private static bakeImportedGradient(grad: any): { s: [number, number]; e: [number, number]; h?: number; a?: number } | null {
+        const m = grad?.transform;
+        if (!Array.isArray(m) || m.length !== 6) return null;
+        const [a, b, c, d, e, f] = m.map((v: any) => LottieExporter.safeNum(v));
+        const apply = (x: number, y: number): [number, number] => [a * x + c * y + e, b * x + d * y + f];
+        const det = a * d - b * c;
+
+        if (grad.type === 'linear') {
+            const sx = grad.start?.x ?? 0, sy = grad.start?.y ?? 0;
+            const ex = grad.end?.x ?? 1, ey = grad.end?.y ?? 0;
+            const dx = ex - sx, dy = ey - sy;
+            const s = apply(sx, sy);
+            if (Math.abs(det) < 1e-12 || (dx === 0 && dy === 0)) {
+                return { s, e: [s[0] + 1, s[1]] };
+            }
+            // A linear gradient's iso-lines stay parallel lines under any affine map,
+            // but the axis does NOT transform like a point under shear / non-uniform
+            // scale — it maps via the inverse-transpose, rescaled so the projection
+            // t(p) = d·(p−s)/|d|² is preserved:  d' = (|d|² / |M⁻ᵀd|²)·M⁻ᵀd
+            const ux = (d * dx - b * dy) / det;
+            const uy = (-c * dx + a * dy) / det;
+            const dd = dx * dx + dy * dy;
+            const uu = ux * ux + uy * uy;
+            const k = uu > 1e-12 ? dd / uu : 0;
+            return { s, e: [s[0] + ux * k, s[1] + uy * k] };
+        }
+
+        // Radial: transform the center; approximate the (possibly elliptical) image of
+        // the circle with an area-preserving circle — radius scaled by √|det M|.
+        // Lottie's gf cannot represent an elliptical radial in a single shape.
+        const cx0 = grad.start?.x ?? 0.5, cy0 = grad.start?.y ?? 0.5;
+        const C = apply(cx0, cy0);
+        const r0 = LottieExporter.safeNum(
+            grad.radius,
+            Math.hypot((grad.end?.x ?? cx0) - cx0, (grad.end?.y ?? cy0) - cy0) || 0.5,
+        );
+        const scale = Math.sqrt(Math.abs(det)) || Math.hypot(a, b) || 1;
+        const r = Math.max(1e-4, r0 * scale);
+        const out: { s: [number, number]; e: [number, number]; h?: number; a?: number } = {
+            s: C, e: [C[0] + r, C[1]],
+        };
+        // SVG focal point → Lottie highlight. h is % of radius from center toward the
+        // focal point; a is the angle relative to the s→e axis (+x here, so absolute).
+        const fx0 = grad.focal?.x ?? cx0, fy0 = grad.focal?.y ?? cy0;
+        if (fx0 !== cx0 || fy0 !== cy0) {
+            const F = apply(fx0, fy0);
+            const fdx = F[0] - C[0], fdy = F[1] - C[1];
+            const fdist = Math.hypot(fdx, fdy);
+            if (fdist > 1e-6) {
+                out.h = Math.min(99, (fdist / r) * 100);
+                out.a = Math.atan2(fdy, fdx) * 180 / Math.PI;
+            }
+        }
+        return out;
+    }
+
+    /**
      * Normalize a set of gradient keyframes so every keyframe has the same stop count and
      * the same alpha-stop presence. The Lottie spec requires `g.p` (stop count) to be constant
      * for all keyframes of a gradient property — if keyframes disagree, Lottie players
@@ -1755,22 +2021,43 @@ export class LottieExporter {
     public static mapMasks(node: SceneNode): any[] | undefined {
         if (!node.masks || node.masks.length === 0) return undefined;
 
-        return node.masks.map(m => {
+        return node.masks.flatMap(m => {
             // If the mask is already in Lottie wire format (from SVG clip-path import),
             // pass it through directly
             if (m.nm !== undefined && m.pt !== undefined) {
-                return m;
+                return [m];
             }
 
-            // Otherwise, process as a SceneNode-style mask
-            const points = m.props?.points || [];
-            return {
+            // Otherwise, process as a SceneNode-style mask. A Lottie mask pt holds ONE
+            // bezier — multi-subpath mask geometry (props.subPathLengths) must fan out
+            // into one mask entry per subpath or the islands get fused by phantom edges.
+            const points: any[] = m.props?.points || [];
+            const lengths: number[] | undefined = m.props?.subPathLengths;
+            const total = lengths?.reduce((a: number, b: number) => a + b, 0);
+            const o = LottieExporter.mapProperty((m.style?.opacity ?? 1) * 100, m.animations?.['style.opacity']?.map((k: any) => ({ ...k, value: k.value * 100 })));
+            if (lengths && lengths.length > 1 && total === points.length) {
+                const entries: any[] = [];
+                let start = 0;
+                for (let i = 0; i < lengths.length; i++) {
+                    const sub = points.slice(start, start + lengths[i]);
+                    entries.push({
+                        nm: (m.name || 'Mask') + (i > 0 ? ` ${i + 1}` : ''),
+                        inv: !!m.inverted,
+                        mode: m.mode || 'a',
+                        pt: LottieExporter.mapProperty({ ...m.props, points: sub, subPathLengths: undefined }),
+                        o,
+                    });
+                    start += lengths[i];
+                }
+                return entries;
+            }
+            return [{
                 nm: m.name || 'Mask',
                 inv: !!m.inverted,
                 mode: m.mode || 'a',
                 pt: LottieExporter.mapProperty(m.props, m.animations?.['points']),
-                o: LottieExporter.mapProperty((m.style?.opacity ?? 1) * 100, m.animations?.['style.opacity']?.map((k: any) => ({ ...k, value: k.value * 100 })))
-            };
+                o,
+            }];
         });
     }
 

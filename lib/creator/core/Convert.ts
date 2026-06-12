@@ -1,6 +1,15 @@
 import { SceneNode } from '../state/sceneSlice';
 import { VectorPoint } from '../tools/PenTool';
 
+// AE/Lottie "Blurriness" → Gaussian sigma. ThorVG (dotlottie-web) renders both the
+// Gaussian Blur effect (ty:29) and Drop Shadow softness with sigma = blurriness * 0.3
+// (BLUR_TO_SIGMA in tvgLottieBuilder.cpp, verified at thorvg v1.0.0). Effect.blur is
+// stored in AE Blurriness units end-to-end (Lottie import/export passes it through
+// 1:1); convert at the boundaries: SVG stdDeviation (= sigma) imports as
+// std / AE_BLUR_TO_SIGMA, and Canvas2D CSS filters (blur(px) = sigma) apply
+// blur * AE_BLUR_TO_SIGMA.
+export const AE_BLUR_TO_SIGMA = 0.3;
+
 export function convertToPath(node: SceneNode): VectorPoint[] {
     if (node.type === 'path') {
         return [...(node.props.points || [])];

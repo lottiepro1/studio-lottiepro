@@ -178,9 +178,18 @@ export default function InspectorPanel() {
       } else if (node.type === 'text') {
         const lb = getTextLocalBounds(node);
         curW = lb.width; curH = lb.height; offX = lb.x; offY = lb.y;
+      } else if (node.type === 'precomp') {
+        // Same bounds getAnimatedAnchor uses: the referenced comp's dimensions.
+        const refComp = node.refId ? nodes.get(node.refId) : null;
+        curW = refComp ? (AnimationUtils.getPropertyValue(refComp, 'props.width', currentTime) || 0) : (node.props.width || 0);
+        curH = refComp ? (AnimationUtils.getPropertyValue(refComp, 'props.height', currentTime) || 0) : (node.props.height || 0);
+      } else if (node.type === 'rect' || node.type === 'image') {
+        curW = AnimationUtils.getPropertyValue(node, 'props.width', currentTime) || 0;
+        curH = AnimationUtils.getPropertyValue(node, 'props.height', currentTime) || 0;
       } else {
-        curW = node.type === 'rect' ? AnimationUtils.getPropertyValue(node, 'props.width', currentTime) : (AnimationUtils.getPropertyValue(node, 'props.radiusX', currentTime) * 2);
-        curH = node.type === 'rect' ? AnimationUtils.getPropertyValue(node, 'props.height', currentTime) : (AnimationUtils.getPropertyValue(node, 'props.radiusY', currentTime) * 2);
+        // ellipse
+        curW = (AnimationUtils.getPropertyValue(node, 'props.radiusX', currentTime) || 0) * 2;
+        curH = (AnimationUtils.getPropertyValue(node, 'props.radiusY', currentTime) || 0) * 2;
       }
 
       const newAnchor = { x: 0, y: 0 };
@@ -331,9 +340,14 @@ export default function InspectorPanel() {
     if (ax === 'mixed' || ay === 'mixed') return false;
 
     let width = 0, height = 0, offX = 0, offY = 0;
-    if (selectedNode.type === 'rect' || selectedNode.type === 'artboard') {
+    if (selectedNode.type === 'rect' || selectedNode.type === 'artboard' || selectedNode.type === 'image') {
       width = AnimationUtils.getPropertyValue(selectedNode, 'props.width', currentTime);
       height = AnimationUtils.getPropertyValue(selectedNode, 'props.height', currentTime);
+    } else if (selectedNode.type === 'precomp') {
+      // Same bounds getAnimatedAnchor uses: the referenced comp's dimensions.
+      const refComp = selectedNode.refId ? nodes.get(selectedNode.refId) : null;
+      width = refComp ? (AnimationUtils.getPropertyValue(refComp, 'props.width', currentTime) || 0) : (selectedNode.props.width || 0);
+      height = refComp ? (AnimationUtils.getPropertyValue(refComp, 'props.height', currentTime) || 0) : (selectedNode.props.height || 0);
     } else if (selectedNode.type === 'ellipse') {
       width = AnimationUtils.getPropertyValue(selectedNode, 'props.radiusX', currentTime) * 2;
       height = AnimationUtils.getPropertyValue(selectedNode, 'props.radiusY', currentTime) * 2;

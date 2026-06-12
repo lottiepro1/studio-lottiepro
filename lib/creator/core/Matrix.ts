@@ -306,6 +306,35 @@ export function getBoundingBox(
   return calculateBoundsFromPoints(corners);
 }
 
+// Extrema of a single cubic Bézier coordinate (p0..p3) on t∈[0,1].
+// Returns the candidate values (endpoints + interior turning points) whose
+// min/max give the TIGHT bound of the curve — not the control-point hull.
+function cubicAxisExtrema(p0: number, p1: number, p2: number, p3: number): number[] {
+  const vals = [p0, p3];
+  // B'(t)/3 = A t² + B t + C, where:
+  const c0 = p1 - p0, c1 = p2 - p1, c2 = p3 - p2;
+  const A = c0 - 2 * c1 + c2;
+  const B = 2 * (c1 - c0);
+  const C = c0;
+  const eval3 = (t: number) => {
+    const mt = 1 - t;
+    return mt * mt * mt * p0 + 3 * mt * mt * t * p1 + 3 * mt * t * t * p2 + t * t * t * p3;
+  };
+  const consider = (t: number) => { if (t > 0 && t < 1) vals.push(eval3(t)); };
+  if (Math.abs(A) < 1e-9) {
+    // Linear derivative: B t + C = 0
+    if (Math.abs(B) > 1e-9) consider(-C / B);
+  } else {
+    const disc = B * B - 4 * A * C;
+    if (disc >= 0) {
+      const sq = Math.sqrt(disc);
+      consider((-B + sq) / (2 * A));
+      consider((-B - sq) / (2 * A));
+    }
+  }
+  return vals;
+}
+
 export function getPathLocalBounds(points: any[]): { x: number; y: number; width: number; height: number } {
   if (!points || points.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
 
@@ -314,30 +343,33 @@ export function getPathLocalBounds(points: any[]): { x: number; y: number; width
   let maxX = -Infinity;
   let maxY = -Infinity;
 
-  for (const p of points) {
-    const px = p.x || 0;
-    const py = p.y || 0;
-    const inX = p.inX || 0;
-    const inY = p.inY || 0;
-    const outX = p.outX || 0;
-    const outY = p.outY || 0;
+  const include = (x: number, y: number) => {
+    minX = Math.min(minX, x); minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+  };
 
-    // Basic bounds from anchor
-    minX = Math.min(minX, px);
-    minY = Math.min(minY, py);
-    maxX = Math.max(maxX, px);
-    maxY = Math.max(maxY, py);
+  // Always include every anchor point (covers single points and the curve ends).
+  for (const p of points) include(p.x || 0, p.y || 0);
 
-    // Include handles
-    minX = Math.min(minX, px + inX);
-    minY = Math.min(minY, py + inY);
-    maxX = Math.max(maxX, px + inX);
-    maxY = Math.max(maxY, py + inY);
+  // For each segment, bound the actual cubic curve via its extrema rather than the
+  // control-point positions. Handles are stored RELATIVE to their anchor, so the
+  // segment from points[i]→points[i+1] is the cubic:
+  //   P0 = anchor[i], P1 = anchor[i]+out[i], P2 = anchor[i+1]+in[i+1], P3 = anchor[i+1]
+  // Consecutive pairs only (no wrap) so open paths aren't inflated by a phantom
+  // closing segment. This matches what the renderer/ThorVG actually draws.
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+    const ax = a.x || 0, ay = a.y || 0;
+    const bx = b.x || 0, by = b.y || 0;
+    const p1x = ax + (a.outX || 0), p1y = ay + (a.outY || 0);
+    const p2x = bx + (b.inX || 0),  p2y = by + (b.inY || 0);
 
-    minX = Math.min(minX, px + outX);
-    minY = Math.min(minY, py + outY);
-    maxX = Math.max(maxX, px + outX);
-    maxY = Math.max(maxY, py + outY);
+    // Straight segment (no handles) — endpoints already included, skip the math.
+    if (a.outX === 0 && a.outY === 0 && b.inX === 0 && b.inY === 0) continue;
+
+    for (const vx of cubicAxisExtrema(ax, p1x, p2x, bx)) { if (vx < minX) minX = vx; if (vx > maxX) maxX = vx; }
+    for (const vy of cubicAxisExtrema(ay, p1y, p2y, by)) { if (vy < minY) minY = vy; if (vy > maxY) maxY = vy; }
   }
 
   return {

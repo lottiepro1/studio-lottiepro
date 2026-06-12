@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Compass, X } from 'lucide-react';
 import { useCreatorStore } from '@/lib/creator/state/store';
-import { SVGImporter } from '@/lib/creator/core/SVGImporter';
+import { SvgImporter } from '@/lib/creator/svg/SvgImporter';
 import { getPathLocalBounds, getCollectiveBoundingBox, getAnchorOffset } from '@/lib/creator/core/Matrix';
 
 interface SVGLLogo {
@@ -86,12 +86,17 @@ export default function DiscoverLogosModal() {
 
             // Parse and group nodes
             const duration = artboard?.props.duration || 100000;
-            const importedNodes = await SVGImporter.importFromString(text, duration);
+            const importedNodes = await SvgImporter.importFromString(text, duration);
             if (!importedNodes || importedNodes.length === 0) return;
 
-            const topLevelIds = importedNodes.filter(n => !n.parentId).map(n => n.id);
+            // Comp artboards (precomp-mode assets, reached via refId) are not placed on canvas.
+            const isPlaceable = (n: typeof importedNodes[number]) => !n.parentId && n.type !== 'artboard';
+            const topLevelIds = importedNodes.filter(isPlaceable).map(n => n.id);
             const nodesMap = new Map(importedNodes.map(n => [n.id, n]));
-            const bounds = getCollectiveBoundingBox(topLevelIds, nodesMap);
+            const svgRoot = importedNodes.find(isPlaceable);
+            const bounds = svgRoot?.props?._svgW
+              ? { x: 0, y: 0, width: svgRoot.props._svgW as number, height: svgRoot.props._svgH as number }
+              : getCollectiveBoundingBox(topLevelIds, nodesMap);
 
             const contentWidth = bounds.width;
             const contentHeight = bounds.height;
@@ -101,7 +106,7 @@ export default function DiscoverLogosModal() {
             // Apply coordinates and parent injection
             if (isFinite(offsetX) && isFinite(offsetY)) {
                 importedNodes.forEach(n => {
-                    if (!n.parentId) {
+                    if (isPlaceable(n)) {
                         n.parentId = artboardId;
                         n.transform.x += offsetX;
                         n.transform.y += offsetY;

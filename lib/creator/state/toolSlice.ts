@@ -17,6 +17,8 @@ export interface ToolSlice {
   setDiscoverModalOpen: (isOpen: boolean) => void;
   activeLayersTab: 'layers' | 'segments';
   setActiveLayersTab: (tab: 'layers' | 'segments') => void;
+  viewportZoom: number;
+  setViewportZoom: (zoom: number) => void;
 }
 
 // Create the tool slice
@@ -33,4 +35,6 @@ export const createToolSlice: StateCreator<ToolSlice> = (set) => ({
   setDiscoverModalOpen: (isOpen) => set({ isDiscoverModalOpen: isOpen }),
   activeLayersTab: 'layers',
   setActiveLayersTab: (tab) => set({ activeLayersTab: tab }),
+  viewportZoom: 1,
+  setViewportZoom: (zoom) => set({ viewportZoom: zoom }),
 });

@@ -33,6 +33,11 @@ export interface Gradient {
   highlightAngle?: number;
   designSize?: { width: number, height: number };
   units?: 'userSpaceOnUse' | 'objectBoundingBox';
+  // SVG-import fields — undefined on editor-created gradients (old render path used)
+  transform?: number[];              // gradient-local → viewport [a,b,c,d,e,f]
+  focal?: { x: number; y: number }; // radial focal point (gradient-local)
+  radius?: number;                   // radial outer radius (gradient-local)
+  spread?: 'pad' | 'reflect' | 'repeat';
 }
 
 // Effect properties

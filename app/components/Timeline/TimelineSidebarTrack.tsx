@@ -406,7 +406,7 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
 
                 {/* Row content — fills rowHeight minus 4px (2px top + 2px bottom), matching right-side bar */}
                 <div
-                    className={`flex items-center gap-1${isBlinking ? ' layer-locked-blink' : ' transition-colors'}`}
+                    className={`flex items-center${isBlinking ? ' layer-locked-blink' : ' transition-colors'}`}
                     style={{
                         height: rowHeight - 4,
                         margin: '2px 0',
@@ -418,62 +418,65 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
                         outlineOffset: -1,
                     }}
                 >
-                    {/* Chevron */}
-                    <button
-                        onClick={(e) => { e.stopPropagation(); onToggleExpand(); }}
-                        className="w-4 h-4 flex items-center justify-center shrink-0 transition-colors"
-                        style={{ color: isSelected ? '#FFFFFF' : ICON_COLOR }}
-                    >
-                        <ChevronRight
-                            size={12}
-                            strokeWidth={1.75}
-                            className={`transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`}
-                        />
-                    </button>
+                    {/* Left section: chevron + type icon + name — uses gap-1 for natural spacing */}
+                    <div className="flex items-center gap-1 flex-1 min-w-0">
+                        {/* Chevron */}
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onToggleExpand(); }}
+                            className="w-4 h-4 flex items-center justify-center shrink-0 transition-colors"
+                            style={{ color: isSelected ? '#FFFFFF' : ICON_COLOR }}
+                        >
+                            <ChevronRight
+                                size={12}
+                                strokeWidth={1.75}
+                                className={`transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`}
+                            />
+                        </button>
 
-                    {/* Layer type icon — Phosphor filled icons */}
-                    <div
-                        className="shrink-0 flex items-center justify-center"
-                        style={{ width: 16, height: 16, color: node.type === 'precomp' ? '#627FE8' : (isSelected ? 'rgba(255,255,255,0.9)' : ICON_COLOR) }}
-                    >
-                        {node.type === 'rect'     && <Square      size={16} weight="fill" />}
-                        {node.type === 'ellipse'  && <Circle      size={16} weight="fill" />}
-                        {node.type === 'path'     && <PenNib      size={16} weight="fill" />}
-                        {node.type === 'text'     && <TextT       size={16} weight="fill" />}
-                        {node.type === 'image'    && <ImageSquare size={16} weight="fill" />}
-                        {(node.type === 'precomp' || node.type === 'artboard') && <BoundingBox size={16} weight="fill" />}
-                        {node.type === 'group' && (() => {
-                            if (node.mergeMode && node.mergeMode !== 'none') {
-                                return <span className="text-[10px] font-bold leading-none" style={{ color: '#627FE8' }}>
-                                    {({ union: '∪', subtract: '−', intersect: '∩', exclude: '⊞' } as any)[node.mergeMode]}
-                                </span>;
-                            }
-                            if (node.props?.isShapeLayer && node.children?.length) {
-                                const firstChild = useCreatorStore.getState().nodes.get(node.children[0]);
-                                if (firstChild) {
-                                    if (firstChild.type === 'rect')     return <Square   size={16} weight="fill" />;
-                                    if (firstChild.type === 'ellipse')  return <Circle   size={16} weight="fill" />;
-                                    if (firstChild.type === 'path')     return <PenNib   size={16} weight="fill" />;
-                                    if (firstChild.type === 'polystar') return <PhStar   size={16} weight="fill" />;
+                        {/* Layer type icon — Phosphor filled icons */}
+                        <div
+                            className="shrink-0 flex items-center justify-center"
+                            style={{ width: 16, height: 16, color: node.type === 'precomp' ? '#627FE8' : (isSelected ? 'rgba(255,255,255,0.9)' : ICON_COLOR) }}
+                        >
+                            {node.type === 'rect'     && <Square      size={16} weight="fill" />}
+                            {node.type === 'ellipse'  && <Circle      size={16} weight="fill" />}
+                            {node.type === 'path'     && <PenNib      size={16} weight="fill" />}
+                            {node.type === 'text'     && <TextT       size={16} weight="fill" />}
+                            {node.type === 'image'    && <ImageSquare size={16} weight="fill" />}
+                            {(node.type === 'precomp' || node.type === 'artboard') && <BoundingBox size={16} weight="fill" />}
+                            {node.type === 'group' && (() => {
+                                if (node.mergeMode && node.mergeMode !== 'none') {
+                                    return <span className="text-[10px] font-bold leading-none" style={{ color: '#627FE8' }}>
+                                        {({ union: '∪', subtract: '−', intersect: '∩', exclude: '⊞' } as any)[node.mergeMode]}
+                                    </span>;
                                 }
-                            }
-                            return <RectDashed size={16} weight="fill" />;
-                        })()}
-                        {!['rect','ellipse','path','text','image','precomp','group','artboard'].includes(node.type) && <Square size={16} weight="fill" />}
+                                if (node.props?.isShapeLayer && node.children?.length) {
+                                    const firstChild = useCreatorStore.getState().nodes.get(node.children[0]);
+                                    if (firstChild) {
+                                        if (firstChild.type === 'rect')     return <Square   size={16} weight="fill" />;
+                                        if (firstChild.type === 'ellipse')  return <Circle   size={16} weight="fill" />;
+                                        if (firstChild.type === 'path')     return <PenNib   size={16} weight="fill" />;
+                                        if (firstChild.type === 'polystar') return <PhStar   size={16} weight="fill" />;
+                                    }
+                                }
+                                return <RectDashed size={16} weight="fill" />;
+                            })()}
+                            {!['rect','ellipse','path','text','image','precomp','group','artboard'].includes(node.type) && <Square size={16} weight="fill" />}
+                        </div>
+
+                        {/* Layer name — drag handle for reordering */}
+                        <span
+                            draggable={node.type !== 'artboard'}
+                            onDragStart={onDragStart}
+                            onDragEnd={onDragEnd}
+                            className="text-[12px] truncate min-w-0 cursor-grab active:cursor-grabbing"
+                            style={{ color: '#FFFFFF', fontWeight: 450, fontFamily: 'Inter', letterSpacing: '0.005em' }}
+                        >
+                            {node.name}
+                        </span>
                     </div>
 
-                    {/* Layer name — drag handle for reordering */}
-                    <span
-                        draggable={node.type !== 'artboard'}
-                        onDragStart={onDragStart}
-                        onDragEnd={onDragEnd}
-                        className="text-[12px] truncate flex-1 min-w-0 cursor-grab active:cursor-grabbing"
-                        style={{ color: '#FFFFFF', fontWeight: 450, fontFamily: 'Inter', letterSpacing: '0.005em' }}
-                    >
-                        {node.name}
-                    </span>
-
-                    {/* Divider before action icons — fades in with hover */}
+                    {/* Divider before action icons — fades in with hover, zero gap to match Layers panel */}
                     <div
                         className={`transition-opacity ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
                         style={{ width: 2, alignSelf: 'stretch', background: '#2C2C2C', flexShrink: 0 }}

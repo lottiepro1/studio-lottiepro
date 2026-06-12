@@ -37,14 +37,10 @@ export function hitTestNode(
     case 'text':
       return hitTestText(node, local.x, local.y, currentTime);
     case 'precomp':
-      if (node.refId) {
-        const refArtboard = nodes.get(node.refId);
-        if (refArtboard) {
-          const w = AnimationUtils.getPropertyValue(refArtboard, 'props.width', currentTime || 0) || 0;
-          const h = AnimationUtils.getPropertyValue(refArtboard, 'props.height', currentTime || 0) || 0;
-          return local.x >= 0 && local.x <= w && local.y >= 0 && local.y <= h;
-        }
-      }
+      // Do NOT use container dimensions for hit testing. The comp often covers the entire
+      // artboard (or more), so a bounds check selects the precomp on every artboard click.
+      // Precomp hit testing is done by recursing into comp children in findNodeAtPoint,
+      // which correctly transforms coordinates into comp space and tests actual content.
       return false;
     case 'artboard':
       const aw = AnimationUtils.getPropertyValue(node, 'props.width', currentTime || 0) || 0;
@@ -75,15 +71,16 @@ function hitTestEllipse(node: SceneNode, localX: number, localY: number, current
   return (dx * dx) / (radiusX * radiusX) + (dy * dy) / (radiusY * radiusY) <= 1;
 }
 
-// Hit test for path (using bounding box for now for simplicity)
+// Hit test for path using tight local bounding box.
+// No padding: local-space padding is amplified by the node's scale and causes huge hit
+// areas for scaled shapes (e.g. SVG imports at 3200% scale where padding=10 → 320px screen).
 function hitTestPath(node: SceneNode, localX: number, localY: number, currentTime: number = 0): boolean {
   const points = (AnimationUtils.getPropertyValue(node, 'props.points', currentTime) || []) as any[];
   if (!points || points.length === 0) return false;
 
   const bounds = getPathLocalBounds(points);
-  const padding = 10;
-  return localX >= bounds.x - padding && localX <= bounds.x + bounds.width + padding &&
-    localY >= bounds.y - padding && localY <= bounds.y + bounds.height + padding;
+  return localX >= bounds.x && localX <= bounds.x + bounds.width &&
+    localY >= bounds.y && localY <= bounds.y + bounds.height;
 }
 
 // Hit test for text
@@ -150,10 +147,30 @@ export function findNodeAtPoint(
     }
 
     if (child.type === 'precomp' && child.refId) {
-      const precompHitId = findNodeAtPoint(screenX, screenY, nodes, child.refId, true, currentTime, child.refId);
-      if (precompHitId) {
-        if (!deep) return childId;
-        return precompHitId;
+      // Transform the click position from the current coordinate space into the comp's
+      // local space. child's worldMatrix maps comp-local → parent space; its inverse goes
+      // the other way. Without this, tests inside the comp use parent coordinates, which
+      // are in a completely different scale/offset (e.g. artboard coords vs 3200%-scaled comp).
+      const precompWorldMatrix = getWorldMatrix(child.id, nodes, currentTime, rootId || parentId || undefined);
+      const compLocal = screenToLocal(screenX, screenY, precompWorldMatrix);
+
+      // A precomp is a clipping viewport (Lottie spec): content outside the comp's w×h is
+      // never rendered, so it must never be clickable either. Comp children (e.g. oversized
+      // blurred background blobs) often extend far beyond the comp rect — without this guard
+      // their out-of-view geometry registers hits well outside the visible comp area.
+      const refComp = nodes.get(child.refId);
+      const compW = refComp ? (AnimationUtils.getPropertyValue(refComp, 'props.width', currentTime || 0) || 0) : 0;
+      const compH = refComp ? (AnimationUtils.getPropertyValue(refComp, 'props.height', currentTime || 0) || 0) : 0;
+      const insideCompViewport =
+        compLocal.x >= 0 && compLocal.x <= compW &&
+        compLocal.y >= 0 && compLocal.y <= compH;
+
+      if (insideCompViewport) {
+        const precompHitId = findNodeAtPoint(compLocal.x, compLocal.y, nodes, child.refId, true, currentTime, child.refId);
+        if (precompHitId) {
+          if (!deep) return childId;
+          return precompHitId;
+        }
       }
     }
 

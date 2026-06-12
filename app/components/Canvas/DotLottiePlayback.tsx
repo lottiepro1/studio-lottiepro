@@ -30,6 +30,18 @@ interface Props {
 // Clamp zoom for canvas sizing — avoid creating excessively large textures
 const MAX_CANVAS_ZOOM = 8;
 
+// 32-bit WASM (ThorVG): Rust panics with "capacity overflow" when
+// width * height * 4 > isize::MAX (~2GB). Cap at 256M pixels to stay well clear.
+const MAX_CANVAS_PIXELS = 268_435_456;
+
+function clampCanvasDims(rawW: number, rawH: number): [number, number] {
+  const w = Math.max(1, Math.round(rawW));
+  const h = Math.max(1, Math.round(rawH));
+  if (w * h <= MAX_CANVAS_PIXELS) return [w, h];
+  const scale = Math.sqrt(MAX_CANVAS_PIXELS / (w * h));
+  return [Math.max(1, Math.round(w * scale)), Math.max(1, Math.round(h * scale))];
+}
+
 /**
  * Renders all animation content via ThorVG (through @lottiefiles/dotlottie-web WASM).
  * Sits above the Canvas2D layer (z-21 vs z-20) and is always visible — hiding the canvas
@@ -195,8 +207,9 @@ export function DotLottiePlayback({
     const dpr = dprRef.current;
     const clampedZoom = Math.min(viewportZoom, MAX_CANVAS_ZOOM);
     lastCanvasZoomRef.current = clampedZoom;
-    canvas.width = Math.round(artboardWidth * dpr * clampedZoom);
-    canvas.height = Math.round(artboardHeight * dpr * clampedZoom);
+    const [initW, initH] = clampCanvasDims(artboardWidth * dpr * clampedZoom, artboardHeight * dpr * clampedZoom);
+    canvas.width = initW;
+    canvas.height = initH;
 
     // Prefer exported data over rawAnimationSource for the initial ThorVG load.
     //
@@ -336,8 +349,9 @@ export function DotLottiePlayback({
     lastCanvasZoomRef.current = clampedZoom;
 
     const dpr = dprRef.current;
-    canvas.width = Math.round(artboardWidth * dpr * clampedZoom);
-    canvas.height = Math.round(artboardHeight * dpr * clampedZoom);
+    const [resizeW, resizeH] = clampCanvasDims(artboardWidth * dpr * clampedZoom, artboardHeight * dpr * clampedZoom);
+    canvas.width = resizeW;
+    canvas.height = resizeH;
 
     // ThorVG reads the new canvas dimensions automatically via resize()
     dl.resize();

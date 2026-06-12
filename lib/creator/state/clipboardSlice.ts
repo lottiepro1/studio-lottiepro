@@ -150,8 +150,17 @@ export const createClipboardSlice: StateCreator<CreatorStore, [["zustand/immer",
         const newNodes = new Map(state.nodes);
         const topLevelDuplicatedIds: string[] = [];
 
-        // Group selection by original order to maintain stacking
-        const selectedIds = [...state.selectedIds];
+        // Only duplicate top-level selected nodes — skip any node whose ancestor
+        // is also selected, since cloneSubtree already copies the whole subtree.
+        const selectedSet = new Set(state.selectedIds);
+        const selectedIds = state.selectedIds.filter(id => {
+            let parentId = state.nodes.get(id)?.parentId ?? null;
+            while (parentId) {
+                if (selectedSet.has(parentId)) return false;
+                parentId = state.nodes.get(parentId)?.parentId ?? null;
+            }
+            return true;
+        });
 
         selectedIds.forEach(originalId => {
             const originalNode = state.nodes.get(originalId);

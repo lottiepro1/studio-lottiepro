@@ -3,7 +3,7 @@
 /* ─── Design Tokens (Dark) ────────────────────────────────── */
 :root {
   /* Surfaces */
-  --bg-canvas:  #111113;
+  --bg-canvas:  #1E1E1E;
   --bg-app:     #2B2B2D;
   --bg-panel:   #1E1E20;
   --bg-surface: #2A2A2C;

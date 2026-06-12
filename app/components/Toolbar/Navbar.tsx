@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { createImageNode, createArtboardNode } from '@/lib/creator/core/SceneNode';
-import { SVGImporter } from '@/lib/creator/core/SVGImporter';
+import { SvgImporter } from '@/lib/creator/svg/SvgImporter';
 import { getCollectiveBoundingBox } from '@/lib/creator/core/Matrix';
 
 // ─── Color tokens (Figma — Studio New UI) ─────────────────────────────────────
@@ -247,12 +247,15 @@ export default function Navbar({ onImportLottie, onExport, leftPanelWidth = 320,
   const redo                 = useCreatorStore(s => s.redo);
   const copySelection        = useCreatorStore(s => s.copySelection);
   const pasteSelection       = useCreatorStore(s => s.pasteSelection);
+  const viewportZoom         = useCreatorStore(s => s.viewportZoom);
+  const setViewportZoom      = useCreatorStore(s => s.setViewportZoom);
+
+  const zoomLevel = Math.round(viewportZoom * 100);
 
   const [showLogoMenu,       setShowLogoMenu]       = useState(false);
   const [showExport,         setShowExport]         = useState(false);
   const [showEditSubmenu,    setShowEditSubmenu]     = useState(false);
   const [showNewFileConfirm, setShowNewFileConfirm] = useState(false);
-  const [zoomLevel,          setZoomLevel]          = useState(100);
   const [showZoom,           setShowZoom]           = useState(false);
 
   const assetInputRef  = useRef<HTMLInputElement>(null);
@@ -301,15 +304,20 @@ export default function Navbar({ onImportLottie, onExport, leftPanelWidth = 320,
       try {
         const text     = await file.text();
         const duration = artboard?.props.duration || 100000;
-        const imported = await SVGImporter.importFromString(text, duration);
-        const topIds   = imported.filter(n => !n.parentId).map(n => n.id);
+        const imported = await SvgImporter.importFromString(text, duration);
+        // Comp artboards (precomp-mode assets, reached via refId) are not placed on canvas.
+        const isPlaceable = (n: typeof imported[number]) => !n.parentId && n.type !== 'artboard';
+        const topIds   = imported.filter(isPlaceable).map(n => n.id);
         const nodesMap = new Map(imported.map(n => [n.id, n]));
-        const bounds   = getCollectiveBoundingBox(topIds, nodesMap);
+        const svgRoot  = imported.find(isPlaceable);
+        const bounds   = svgRoot?.props?._svgW
+          ? { x: 0, y: 0, width: svgRoot.props._svgW as number, height: svgRoot.props._svgH as number }
+          : getCollectiveBoundingBox(topIds, nodesMap);
         const ox = cx - (bounds.x + bounds.width  / 2);
         const oy = cy - (bounds.y + bounds.height / 2);
 
         imported.forEach(n => {
-          if (!n.parentId) { n.parentId = artboardId; n.transform.x += ox; n.transform.y += oy; }
+          if (isPlaceable(n)) { n.parentId = artboardId; n.transform.x += ox; n.transform.y += oy; }
         });
 
         if (artboard?.props.width && artboard?.props.height && bounds.width > 0 && bounds.height > 0) {
@@ -319,7 +327,7 @@ export default function Navbar({ onImportLottie, onExport, leftPanelWidth = 320,
           );
           if (Math.abs(scale - 1) > 0.01) {
             imported.forEach(n => {
-              if (!n.parentId || n.parentId === artboardId) {
+              if ((isPlaceable(n) || n.parentId === artboardId) && n.type !== 'artboard') {
                 n.transform.x      = cx + (n.transform.x - cx) * scale;
                 n.transform.y      = cy + (n.transform.y - cy) * scale;
                 n.transform.scaleX *= scale;
@@ -529,7 +537,7 @@ export default function Navbar({ onImportLottie, onExport, leftPanelWidth = 320,
                     {ZOOM_LEVELS.map(lvl => (
                       <button
                         key={lvl}
-                        onClick={() => { setZoomLevel(lvl); setShowZoom(false); }}
+                        onClick={() => { setViewportZoom(lvl / 100); setShowZoom(false); }}
                         className="w-full px-4 py-1.5 text-right text-[13px] transition-colors"
                         style={{
                           color: lvl === zoomLevel ? '#6E8EF7' : MENU_TEXT,

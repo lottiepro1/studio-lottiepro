@@ -33,22 +33,8 @@ import { getWorldMatrix, getBoundingBox, localToScreen, createTransformMatrix, g
 import { AnimationUtils } from '@/lib/creator/core/Animation';
 import { convertToPath } from '@/lib/creator/core/Convert';
 import { createArtboardNode, createNode, createDefaultTransform } from '@/lib/creator/core/SceneNode';
-import { SVGImporter } from '@/lib/creator/core/SVGImporter';
+import { SvgImporter } from '@/lib/creator/svg/SvgImporter';
 import { loadFontCSS } from '@/lib/creator/fonts/GoogleFontsService';
-import {
-  Play,
-  Pause,
-  SkipBack,
-  SkipForward,
-  Repeat,
-  Minus,
-  Plus,
-  Maximize,
-  RotateCcw,
-  Clock,
-  ChevronDown
-} from 'lucide-react';
-
 function checkNodeHierarchy(leafId: string | null, targetId: string, nodes: Map<string, SceneNode>): boolean {
   if (!leafId || !targetId) return false;
   let curr: SceneNode | undefined = nodes.get(leafId);
@@ -105,7 +91,11 @@ function hitTestThorVGLayers(
     if (Math.abs(dl.currentFrame - currentTime) > 0.5) dl.setFrame(currentTime);
   } catch { /* ignore */ }
 
-  // Threshold for rejecting full-artboard bboxes (ThorVG returns canvas size for unresolvable layers)
+  // Threshold for rejecting ThorVG "unresolvable layer" fallback bboxes.
+  // ThorVG returns the exact canvas rect (0,0,W,H) when it can't locate a layer.
+  // Genuine large-content layers (e.g. a precomp filling most of the artboard) may also
+  // be large, but their bbox won't start at exactly (0,0) unless the content is literally
+  // flush with the canvas top-left corner. So we reject ONLY when large AND near-origin.
   const maxW = artboardW * dpr * zoom * 0.85;
   const maxH = artboardH * dpr * zoom * 0.85;
 
@@ -115,8 +105,12 @@ function hitTestThorVGLayers(
     const node = nodes.get(nodeId);
     if (!node || !node.name || !node.visible || node.locked || node.type === 'artboard') continue;
     // Temporal visibility: layers outside their active time range are not on screen — skip.
-    // After Effects / LottieFiles never select layers that are off-screen at the current frame.
     if (currentTime < node.inPoint || currentTime > node.outPoint) continue;
+    // Precomp layers: ThorVG returns the comp container bbox (not tight content bounds), so
+    // any click within the comp area registers as a hit regardless of actual shape coverage.
+    // Skip them here — Canvas2D findNodeAtPoint recurses into comp children with proper
+    // coordinate transformation for accurate content-based hit testing.
+    if (node.type === 'precomp') continue;
     // getLayerBoundingBox looks up by name — skip duplicate names (ThorVG would return wrong layer)
     const nameIsUnique = artboardChildIds.filter(id => nodes.get(id)?.name === node.name).length === 1;
     if (!nameIsUnique) continue;
@@ -129,12 +123,14 @@ function hitTestThorVGLayers(
       const [x0, y0, x1, y1, , , x3, y3] = bbox;
       if (![x0, y0, x1, y1, x3, y3].every(isFinite)) continue;
 
-      // Reject full-canvas fallback bboxes (ThorVG can't resolve layer → returns canvas dims)
+      // Reject full-canvas fallback bboxes (ThorVG can't resolve layer → returns exact canvas rect).
+      // The extra `x0 < 3 && y0 < 3` guard distinguishes this from genuine large-content layers
+      // (precomps, wide backgrounds) whose OBBs may exceed 85% but won't start at exactly (0,0).
       const e0x = x1 - x0, e0y = y1 - y0;
       const e1x = x3 - x0, e1y = y3 - y0;
       const bboxW = Math.sqrt(e0x * e0x + e0y * e0y);
       const bboxH = Math.sqrt(e1x * e1x + e1y * e1y);
-      if (bboxW > maxW && bboxH > maxH) continue;
+      if (bboxW > maxW && bboxH > maxH && x0 < 3 && y0 < 3) continue;
       // Reject degenerate (zero-size) bboxes — null layers and invisible content return all-zero
       // coords from ThorVG. A zero bbox passes the OBB point-in-test for ANY click position
       // (0 >= 0 && 0 <= 0 is always true), so it must be rejected before that test.
@@ -469,6 +465,18 @@ export default function CanvasView() {
   const activeArtboardId = useCreatorStore((state) => state.activeArtboardId);
   const setActiveArtboard = useCreatorStore((state) => state.setActiveArtboard);
   const precompose = useCreatorStore((state) => state.precompose);
+  const storeViewportZoom = useCreatorStore((state) => state.viewportZoom);
+  const setViewportZoom = useCreatorStore((state) => state.setViewportZoom);
+
+  // Sync viewport zoom from store (driven by Navbar dropdown)
+  useEffect(() => {
+    setViewport(prev => ({ ...prev, zoom: storeViewportZoom }));
+  }, [storeViewportZoom]);
+
+  // Sync viewport zoom back to store so Navbar display stays current
+  useEffect(() => {
+    setViewportZoom(viewport.zoom);
+  }, [viewport.zoom]);
 
   // Helper: Detect if a mouse is over a handle or in the "rotate zone"
   const getHandleAtPoint = (
@@ -877,6 +885,21 @@ export default function CanvasView() {
   };
 
   // Zoom towards cursor
+  // Block Ctrl/Cmd+scroll browser page zoom on all panels except the canvas container.
+  // The canvas container has its own wheel handler that intercepts Ctrl+scroll there.
+  useEffect(() => {
+    const blockPageZoom = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const container = containerRef.current;
+      // If the event originated inside the canvas container, let it bubble to the
+      // container's own wheel handler — don't double-handle it here.
+      if (container && container.contains(e.target as Node)) return;
+      e.preventDefault();
+    };
+    window.addEventListener('wheel', blockPageZoom, { passive: false, capture: true });
+    return () => window.removeEventListener('wheel', blockPageZoom, { capture: true });
+  }, []);
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -955,6 +978,30 @@ export default function CanvasView() {
       // DIAGNOSTIC LOG
       if ((e.ctrlKey || e.metaKey)) {
         console.log(`🪄 Shortcut detected: ${e.metaKey ? 'Cmd' : 'Ctrl'}+${e.key}`);
+      }
+
+      // Intercept Ctrl/Cmd + =/+/-/0 to prevent browser page zoom; redirect to canvas zoom
+      if (e.ctrlKey || e.metaKey) {
+        const SNAP_LEVELS = [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4];
+        if (e.key === '=' || e.key === '+') {
+          e.preventDefault();
+          const cur = useCreatorStore.getState().viewportZoom;
+          const next = SNAP_LEVELS.find(z => z > cur + 0.001) ?? SNAP_LEVELS[SNAP_LEVELS.length - 1];
+          useCreatorStore.getState().setViewportZoom(next);
+          return;
+        }
+        if (e.key === '-') {
+          e.preventDefault();
+          const cur = useCreatorStore.getState().viewportZoom;
+          const prev = [...SNAP_LEVELS].reverse().find(z => z < cur - 0.001) ?? SNAP_LEVELS[0];
+          useCreatorStore.getState().setViewportZoom(prev);
+          return;
+        }
+        if (e.key === '0') {
+          e.preventDefault();
+          useCreatorStore.getState().setViewportZoom(1);
+          return;
+        }
       }
 
       // In state-flow mode, block all editing shortcuts (only allow Undo/Redo/Escape)
@@ -1051,26 +1098,25 @@ export default function CanvasView() {
           e.preventDefault();
           e.stopPropagation();
 
-          // Filter nodes to only include those within the active artboard
+          // Select only top-level layers (direct children of the active artboard).
+          // Selecting both a group and its children causes duplicate operations to
+          // fire on each, resulting in extra nodes inside the cloned group.
           const targetIds: string[] = [];
           if (state.activeArtboardId) {
-            const traverse = (parentId: string) => {
-              const p = state.nodes.get(parentId);
-              if (p) {
-                p.children.forEach(childId => {
-                  const child = state.nodes.get(childId);
-                  if (child && child.type !== 'artboard') {
-                    targetIds.push(childId);
-                    traverse(childId);
-                  }
-                });
-              }
-            };
-            traverse(state.activeArtboardId);
+            const artboard = state.nodes.get(state.activeArtboardId);
+            if (artboard) {
+              artboard.children.forEach(childId => {
+                const child = state.nodes.get(childId);
+                if (child && child.type !== 'artboard') targetIds.push(childId);
+              });
+            }
           } else {
-            // Fallback
+            // Fallback: top-level non-artboard nodes (those whose parent is an artboard)
             state.nodes.forEach((n, id) => {
-              if (n.type !== 'artboard') targetIds.push(id);
+              if (n.type !== 'artboard') {
+                const parent = n.parentId ? state.nodes.get(n.parentId) : null;
+                if (!parent || parent.type === 'artboard') targetIds.push(id);
+              }
             });
           }
           state.setSelection(targetIds);
@@ -1176,7 +1222,7 @@ export default function CanvasView() {
         console.log('🎨 Attempting to parse system clipboard as SVG...');
         const artboard = (state as any).activeArtboardId ? state.nodes.get((state as any).activeArtboardId) : Array.from(state.nodes.values()).find(n => n.type === 'artboard');
         const duration = artboard?.props.duration || 100000;
-        const nodes = await SVGImporter.parseClipboard(e.clipboardData, duration);
+        const nodes = await SvgImporter.parseClipboard(e.clipboardData, duration);
         if (nodes && nodes.length > 0) {
           console.log(`✅ Successfully parsed ${nodes.length} SVG nodes from clipboard`);
           e.preventDefault();
@@ -1184,8 +1230,9 @@ export default function CanvasView() {
           // Find artboard to center the new nodes
           const artboard = (state as any).activeArtboardId ? state.nodes.get((state as any).activeArtboardId) : Array.from(state.nodes.values()).find(n => n.type === 'artboard');
           if (artboard) {
-            // Calculate center of imported nodes to offset them
-            const topLevelNodes = nodes.filter(n => !n.parentId);
+            // Calculate center of imported nodes to offset them.
+            // Comp artboards (precomp-mode assets, reached via refId) are not placed.
+            const topLevelNodes = nodes.filter(n => !n.parentId && n.type !== 'artboard');
             const topLevelIds = topLevelNodes.map(n => n.id);
 
             // Name top-level nodes according to 'svg', 'svg_1', 'svg_2' pattern
@@ -1212,10 +1259,10 @@ export default function CanvasView() {
             const offsetY = targetY - (bounds.y + bounds.height / 2);
 
             nodes.forEach(node => {
-              if (!node.parentId) {
+              if (!node.parentId && node.type !== 'artboard') {
                 node.parentId = artboard.id;
                 if (!node.transform) node.transform = { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0, anchorX: 0, anchorY: 0, anchorAlignX: 0.5, anchorAlignY: 0.5 };
-                
+
                 // Apply the artboard-centering offset
                 node.transform.x += offsetX;
                 node.transform.y += offsetY;
@@ -1229,7 +1276,7 @@ export default function CanvasView() {
             const updatedArtboard = { ...artboard, children: [...artboard.children, ...topLevelIds] };
             state.updateNode(artboard.id, updatedArtboard);
           } else {
-            const topLevelNodes = nodes.filter(n => !n.parentId);
+            const topLevelNodes = nodes.filter(n => !n.parentId && n.type !== 'artboard');
             const topLevelIds = topLevelNodes.map(n => n.id);
 
             // Name top-level nodes according to 'svg', 'svg_1', 'svg_2' pattern
@@ -3851,86 +3898,6 @@ export default function CanvasView() {
         );
       })()}
 
-
-      <div
-        className="absolute bottom-5 left-1/2 -translate-x-1/2 flex items-center gap-1 p-0.5 rounded-[12px] border border-white/20 shadow-[0_15px_30px_-10px_rgba(0,0,0,0.6),0_0_0_1px_rgba(255,255,255,0.05)] pointer-events-auto z-[100] transition-all duration-700 cubic-bezier(0.16,1,0.3,1) hover:scale-[1.03]"
-        style={{
-          background: 'linear-gradient(180deg, rgba(30, 30, 35, 0.9) 0%, rgba(15, 15, 18, 0.98) 100%)',
-          backdropFilter: 'blur(20px) saturate(250%) contrast(110%)',
-          WebkitBackdropFilter: 'blur(20px) saturate(250%) contrast(110%)',
-        }}
-      >
-        {/* Time Tracking (Micro Pod) */}
-        <div className="px-2 py-0.5 bg-black/40 rounded-[8px] border border-white/5 flex items-center justify-center min-w-[64px] shadow-inner">
-          <span className="text-[10px] font-mono font-medium text-accent tracking-tighter">
-            {Math.floor(currentTime / fps)}s {Math.round(currentTime % fps)}f
-          </span>
-        </div>
-
-        {/* Navigation Group (Micro Well) */}
-        <div className="flex items-center gap-0.5 bg-white/[0.03] p-0.5 rounded-[8px] border border-white/5 shadow-inner">
-          <button
-            onClick={() => setCurrentTime(Math.max(0, currentTime - 1))}
-            className="w-6 h-6 flex items-center justify-center hover:bg-white/10 rounded-[6px] text-white/20 hover:text-white transition-all active:scale-90"
-            title="Step Backward"
-          >
-            <SkipBack size={10} fill="currentColor" />
-          </button>
-
-          <button
-            onClick={() => {
-              if (creatorMode === 'state-flow') toggleSmPlaying();
-              else togglePlaying();
-            }}
-            className={`w-7 h-7 flex items-center justify-center rounded-[7px] transition-all duration-300 active:scale-90 ${(creatorMode === 'state-flow' ? smIsPlaying : isPlaying) ? 'text-white' : 'bg-white/10 text-white hover:bg-white/20'}`}
-            style={(creatorMode === 'state-flow' ? smIsPlaying : isPlaying) ? { background: 'var(--accent)' } : {}}
-          >
-            {(creatorMode === 'state-flow' ? smIsPlaying : isPlaying) ? <Pause size={12} fill="currentColor" /> : <Play size={12} fill="currentColor" className="ml-0.5" />}
-          </button>
-
-          <button
-            onClick={() => setCurrentTime(Math.min(duration, currentTime + 1))}
-            className="w-6 h-6 flex items-center justify-center hover:bg-white/10 rounded-[6px] text-white/20 hover:text-white transition-all active:scale-90"
-            title="Step Forward"
-          >
-            <SkipForward size={10} fill="currentColor" />
-          </button>
-        </div>
-
-        {/* Secondary Controls Group (Micro) */}
-        <div className="flex items-center gap-0.5 bg-white/[0.02] p-0.5 rounded-[8px] border border-white/5">
-          <button
-            onClick={toggleLooping}
-            className={`w-6 h-6 flex items-center justify-center rounded-[6px] transition-all duration-300 ${isLooping ? 'text-accent bg-accent/15' : 'text-white/20 hover:text-white/40'}`}
-            title="Toggle Loop"
-          >
-            <Repeat size={12} />
-          </button>
-
-          <div className="w-px h-2.5 bg-white/10 mx-0.5" />
-
-          {/* Zoom Section */}
-          <div className="flex items-center gap-0.5">
-            <button
-              onClick={() => setViewport(prev => ({ ...prev, zoom: Math.max(0.01, prev.zoom * 0.8) }))}
-              className="w-5 h-5 flex items-center justify-center hover:bg-white/10 rounded-[4px] text-white/20 hover:text-white transition-colors"
-            >
-              <Minus size={10} />
-            </button>
-            <div className="min-w-[28px] text-center">
-              <span className="text-[9px] font-mono font-bold text-white/40 tracking-tight">
-                {Math.round(viewport.zoom * 100)}%
-              </span>
-            </div>
-            <button
-              onClick={() => setViewport(prev => ({ ...prev, zoom: Math.min(100, prev.zoom * 1.25) }))}
-              className="w-5 h-5 flex items-center justify-center hover:bg-white/10 rounded-[4px] text-white/20 hover:text-white transition-colors"
-            >
-              <Plus size={10} />
-            </button>
-          </div>
-        </div>
-      </div>
 
       {/* Font Preloader (Hidden) to keep fonts "hot" in the browser */}
       <div style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', visibility: 'hidden', height: 0, overflow: 'hidden' }}>
