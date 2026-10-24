@@ -1826,35 +1826,27 @@ export class LottieParser {
                     currentAnimations['style.trimOffset'] = oData.keyframes.map(kf => ({ ...kf, time: kf.time }));
                 }
 
-                // Determine where trim animations belong based on shape count in scope.
-                // Single leaf shape → animations on the shape (LottieFiles behavior: trim is per-shape).
-                // Multiple shapes (or 0 — tm placed before shape items) → animations on the parent group
-                // so the group-level trim operator applies to the compound path.
-                const leafTypes = new Set(['rect', 'ellipse', 'path', 'polystar']);
-                const directLeafShapes = createdNodesInThisScope.filter(n => leafTypes.has(n.type));
-                const isSingleShapeTrim = directLeafShapes.length === 1;
-
-                allNodesInScope.forEach(n => {
-                    n.style.trimStart = currentStyle.trimStart;
-                    n.style.trimEnd = currentStyle.trimEnd;
-                    n.style.trimOffset = currentStyle.trimOffset;
-                    if (isSingleShapeTrim) {
-                        // Trim animations live on the single shape, matching LottieFiles display
-                        n.animations = { ...n.animations, ...currentAnimations };
-                    }
-                    // Multiple shapes: individual shapes get static style only; animations go on the group
-                });
+                // A Trim Paths modifier wraps every shape BEFORE it in the same scope, so it is a
+                // property of the SCOPE OWNER (the group/layer = parentNode), NOT of each child.
+                // It must NOT be copied onto the individual leaves/sub-groups: an imported animated
+                // trim collapses to a STATIC resting value (its first keyframe, commonly 0), and if
+                // that static value lands on a child group the exporter treats the group as
+                // "trim-edited" and emits a SECOND, constant `tm` inside it — trimming the geometry
+                // to nothing forever, before the real animated (parent/layer-level) trim runs. The
+                // whole layer (stroke included) then vanishes. Keep it only on parentNode/liftingTarget
+                // so exactly one animated `tm` is emitted at the correct level.
+                const trimAnims: Record<string, any> = {};
+                if (sData.keyframes) trimAnims['style.trimStart'] = currentAnimations['style.trimStart'];
+                if (eData.keyframes) trimAnims['style.trimEnd'] = currentAnimations['style.trimEnd'];
+                if (oData.keyframes) trimAnims['style.trimOffset'] = currentAnimations['style.trimOffset'];
 
                 [parentNode, liftingTarget].forEach(target => {
-                    if (target) {
-                        target.style.trimStart = currentStyle.trimStart;
-                        target.style.trimEnd = currentStyle.trimEnd;
-                        target.style.trimOffset = currentStyle.trimOffset;
-                        if (!isSingleShapeTrim) {
-                            // Multiple shapes: trim is a group-level operation
-                            target.animations = { ...target.animations, ...currentAnimations };
-                        }
-                        // Single shape: don't lift trim animations to parent group
+                    if (!target) return;
+                    target.style.trimStart = currentStyle.trimStart;
+                    target.style.trimEnd = currentStyle.trimEnd;
+                    target.style.trimOffset = currentStyle.trimOffset;
+                    if (Object.keys(trimAnims).length > 0) {
+                        target.animations = { ...target.animations, ...trimAnims };
                     }
                 });
             }

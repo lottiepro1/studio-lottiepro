@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { Search, Compass, X } from 'lucide-react';
 import { useCreatorStore } from '@/lib/creator/state/store';
 import { SvgImporter } from '@/lib/creator/svg/SvgImporter';
-import { getPathLocalBounds, getCollectiveBoundingBox, getAnchorOffset } from '@/lib/creator/core/Matrix';
+import { centerAndFitSvgImport } from '@/lib/creator/core/ImportPlacement';
 
 interface SVGLLogo {
     title: string;
@@ -81,41 +81,16 @@ export default function DiscoverLogosModal() {
             }
 
             const artboard = nodes.get(artboardId);
-            const centerX = artboard?.props.width ? artboard.props.width / 2 : 250;
-            const centerY = artboard?.props.height ? artboard.props.height / 2 : 250;
 
             // Parse and group nodes
             const duration = artboard?.props.duration || 100000;
-            const importedNodes = await SvgImporter.importFromString(text, duration);
+            // Name the placed root after the logo; inner layers keep their SVG names.
+            const importedNodes = await SvgImporter.importFromString(text, duration, logo.title || 'svg');
             if (!importedNodes || importedNodes.length === 0) return;
 
-            // Comp artboards (precomp-mode assets, reached via refId) are not placed on canvas.
-            const isPlaceable = (n: typeof importedNodes[number]) => !n.parentId && n.type !== 'artboard';
-            const topLevelIds = importedNodes.filter(isPlaceable).map(n => n.id);
-            const nodesMap = new Map(importedNodes.map(n => [n.id, n]));
-            const svgRoot = importedNodes.find(isPlaceable);
-            const bounds = svgRoot?.props?._svgW
-              ? { x: 0, y: 0, width: svgRoot.props._svgW as number, height: svgRoot.props._svgH as number }
-              : getCollectiveBoundingBox(topLevelIds, nodesMap);
-
-            const contentWidth = bounds.width;
-            const contentHeight = bounds.height;
-            const offsetX = centerX - (bounds.x + contentWidth / 2);
-            const offsetY = centerY - (bounds.y + contentHeight / 2);
-
-            // Apply coordinates and parent injection
-            if (isFinite(offsetX) && isFinite(offsetY)) {
-                importedNodes.forEach(n => {
-                    if (isPlaceable(n)) {
-                        n.parentId = artboardId;
-                        n.transform.x += offsetX;
-                        n.transform.y += offsetY;
-
-                        // Assign name if it's the top level element
-                        if (n.name === 'Group') n.name = logo.title;
-                    }
-                });
-            }
+            // Center + fit to the artboard (same path as the toolbar/navbar imports — this
+            // modal previously centered but never scaled, so logos came in at native size).
+            centerAndFitSvgImport(importedNodes, artboardId, artboard);
 
             console.log(`🚀 Adding ${importedNodes.length} SVG logic nodes...`);
             addNodesBatch(importedNodes);

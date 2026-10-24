@@ -8,7 +8,7 @@ import {
 import { useRef, useState } from 'react';
 import { createImageNode, createArtboardNode } from '@/lib/creator/core/SceneNode';
 import { SvgImporter } from '@/lib/creator/svg/SvgImporter';
-import { getCollectiveBoundingBox } from '@/lib/creator/core/Matrix';
+import { centerAndFitSvgImport, fitImageScale } from '@/lib/creator/core/ImportPlacement';
 
 // ─── Color tokens (Figma — Studio New UI) ─────────────────────────────────────
 const NAV_BG          = '#2C2C2C';
@@ -304,38 +304,10 @@ export default function Navbar({ onImportLottie, onExport, leftPanelWidth = 320,
       try {
         const text     = await file.text();
         const duration = artboard?.props.duration || 100000;
-        const imported = await SvgImporter.importFromString(text, duration);
-        // Comp artboards (precomp-mode assets, reached via refId) are not placed on canvas.
-        const isPlaceable = (n: typeof imported[number]) => !n.parentId && n.type !== 'artboard';
-        const topIds   = imported.filter(isPlaceable).map(n => n.id);
-        const nodesMap = new Map(imported.map(n => [n.id, n]));
-        const svgRoot  = imported.find(isPlaceable);
-        const bounds   = svgRoot?.props?._svgW
-          ? { x: 0, y: 0, width: svgRoot.props._svgW as number, height: svgRoot.props._svgH as number }
-          : getCollectiveBoundingBox(topIds, nodesMap);
-        const ox = cx - (bounds.x + bounds.width  / 2);
-        const oy = cy - (bounds.y + bounds.height / 2);
-
-        imported.forEach(n => {
-          if (isPlaceable(n)) { n.parentId = artboardId; n.transform.x += ox; n.transform.y += oy; }
-        });
-
-        if (artboard?.props.width && artboard?.props.height && bounds.width > 0 && bounds.height > 0) {
-          const scale = Math.min(
-            (artboard.props.width  * 0.8) / bounds.width,
-            (artboard.props.height * 0.8) / bounds.height,
-          );
-          if (Math.abs(scale - 1) > 0.01) {
-            imported.forEach(n => {
-              if ((isPlaceable(n) || n.parentId === artboardId) && n.type !== 'artboard') {
-                n.transform.x      = cx + (n.transform.x - cx) * scale;
-                n.transform.y      = cy + (n.transform.y - cy) * scale;
-                n.transform.scaleX *= scale;
-                n.transform.scaleY *= scale;
-              }
-            });
-          }
-        }
+        const svgName  = file.name.replace(/\.[^/.]+$/, '') || 'svg';
+        const imported = await SvgImporter.importFromString(text, duration, svgName);
+        // Center + fit to the artboard (shared across all import entry points).
+        centerAndFitSvgImport(imported, artboardId, artboard);
         addNodesBatch(imported);
       } catch (err) { console.error('SVG import error:', err); }
     } else if (file.type.startsWith('image/')) {
@@ -345,13 +317,9 @@ export default function Navbar({ onImportLottie, onExport, leftPanelWidth = 320,
         const img = new Image();
         img.onload = () => {
           const node = createImageNode(cx, cy, img.naturalWidth, img.naturalHeight, src, file.name.split('.')[0], artboardId || null);
-          if (artboard?.props.width && artboard?.props.height) {
-            const scale = Math.min(
-              (artboard.props.width  * 0.8) / img.naturalWidth,
-              (artboard.props.height * 0.8) / img.naturalHeight,
-            );
-            if (Math.abs(scale - 1) > 0.01) { node.transform.scaleX = scale; node.transform.scaleY = scale; }
-          }
+          // Fit to artboard — shrink-only so small rasters aren't upscaled into blur.
+          const scale = fitImageScale(img.naturalWidth, img.naturalHeight, artboard);
+          if (Math.abs(scale - 1) > 0.01) { node.transform.scaleX = scale; node.transform.scaleY = scale; }
           addNodesBatch([node]);
         };
         img.src = src;

@@ -5,8 +5,7 @@ import { MousePointer2, Square, Circle, PenTool, Type, Image as ImageIcon, GripH
 import { useRef } from 'react';
 import { createImageNode } from '@/lib/creator/core/SceneNode';
 import { SvgImporter } from '@/lib/creator/svg/SvgImporter';
-import { getPathLocalBounds, getCollectiveBoundingBox, getAnchorOffset } from '@/lib/creator/core/Matrix';
-import { SceneNode } from '@/lib/creator/state/sceneSlice';
+import { centerAndFitSvgImport, fitImageScale } from '@/lib/creator/core/ImportPlacement';
 
 export default function Toolbar() {
   const activeTool = useCreatorStore((state) => state.activeTool);
@@ -55,67 +54,12 @@ export default function Toolbar() {
       try {
         const text = await file.text();
         const duration = artboard?.props.duration || 100000;
-        const importedNodes = await SvgImporter.importFromString(text, duration);
+        const svgName = file.name.replace(/\.[^/.]+$/, '') || 'svg';
+        const importedNodes = await SvgImporter.importFromString(text, duration, svgName);
         console.log(`🔹 SVG parsed: ${importedNodes.length} nodes (Duration: ${duration})`);
 
-        // Placeable = the single root node to center on canvas. Comp artboards
-        // (precomp-mode assets, reached via refId) must NOT be placed or centered.
-        const isPlaceable = (n: SceneNode) => !n.parentId && n.type !== 'artboard';
-        const topLevelIds = importedNodes.filter(isPlaceable).map(n => n.id);
-        const nodesMap = new Map(importedNodes.map(n => [n.id, n]));
-        const svgRoot = importedNodes.find(isPlaceable);
-        const bounds = svgRoot?.props?._svgW
-          ? { x: 0, y: 0, width: svgRoot.props._svgW as number, height: svgRoot.props._svgH as number }
-          : getCollectiveBoundingBox(topLevelIds, nodesMap);
-
-        const contentWidth = bounds.width;
-        const contentHeight = bounds.height;
-        const offsetX = centerX - (bounds.x + contentWidth / 2);
-        const offsetY = centerY - (bounds.y + contentHeight / 2);
-
-        // Apply offset and parent
-        if (isFinite(offsetX) && isFinite(offsetY)) {
-          importedNodes.forEach(n => {
-            if (isPlaceable(n)) {
-              n.parentId = artboardId;
-              n.transform.x += offsetX;
-              n.transform.y += offsetY;
-            }
-          });
-
-          // Auto-scale SVG to fit artboard
-          if (artboard && artboard.props.width && artboard.props.height && contentWidth > 0 && contentHeight > 0) {
-            const artboardAreaWidth = artboard.props.width * 0.8;
-            const artboardAreaHeight = artboard.props.height * 0.8;
-
-            const scaleW = artboardAreaWidth / contentWidth;
-            const scaleH = artboardAreaHeight / contentHeight;
-            const scale = Math.min(scaleW, scaleH);
-
-            // If significantly different from 1, apply it
-            if (Math.abs(scale - 1) > 0.01) {
-              console.log(`📉 Auto-scaling SVG by ${scale.toFixed(2)} to fit artboard`);
-              importedNodes.forEach(n => {
-                if ((isPlaceable(n) || n.parentId === artboardId) && n.type !== 'artboard') {
-                  // Scale position relative to center
-                  const dx = n.transform.x - centerX;
-                  const dy = n.transform.y - centerY;
-                  n.transform.x = centerX + dx * scale;
-                  n.transform.y = centerY + dy * scale;
-
-                  // Scale node
-                  n.transform.scaleX *= scale;
-                  n.transform.scaleY *= scale;
-                }
-              });
-            }
-          }
-        } else {
-          // Fallback if bounds calc failed (e.g. paths without width props)
-          importedNodes.forEach(n => {
-            if (isPlaceable(n)) n.parentId = artboardId;
-          });
-        }
+        // Center + fit to the artboard (shared across all import entry points).
+        centerAndFitSvgImport(importedNodes, artboardId, artboard);
 
         console.log(`🚀 Adding ${importedNodes.length} SVG nodes to store...`);
         addNodesBatch(importedNodes);
@@ -138,20 +82,11 @@ export default function Toolbar() {
             artboardId || null
           );
 
-          // Auto-scale to fit artboard
-          if (artboard && artboard.props.width && artboard.props.height) {
-            const artboardAreaWidth = artboard.props.width * 0.8;
-            const artboardAreaHeight = artboard.props.height * 0.8;
-
-            const scaleW = artboardAreaWidth / img.naturalWidth;
-            const scaleH = artboardAreaHeight / img.naturalHeight;
-            const scale = Math.min(scaleW, scaleH);
-
-            if (Math.abs(scale - 1) > 0.01) {
-              console.log(`📉 Auto-scaling Image by ${scale.toFixed(2)} to fit artboard`);
-              node.transform.scaleX = scale;
-              node.transform.scaleY = scale;
-            }
+          // Fit to artboard — shrink-only so small rasters aren't upscaled into blur.
+          const scale = fitImageScale(img.naturalWidth, img.naturalHeight, artboard);
+          if (Math.abs(scale - 1) > 0.01) {
+            node.transform.scaleX = scale;
+            node.transform.scaleY = scale;
           }
 
           console.log('✅ Image node created:', node);

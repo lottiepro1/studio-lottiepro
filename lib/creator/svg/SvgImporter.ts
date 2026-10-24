@@ -92,6 +92,26 @@ let _layeredMode = false;
 // Reset at the start of each importFromString call so names are stable across re-imports.
 let _nameSeq = 0;
 
+// The author-given name for an SVG element, if any. Illustrator/Sketch export the
+// human-readable layer name as data-name (while id is a sanitized duplicate); Inkscape
+// uses inkscape:label; everyone else uses id. Prefer the human name, then id.
+function svgElName(el: SVGElement): string | null {
+  const n = el.getAttribute('data-name') || el.getAttribute('inkscape:label') || el.getAttribute('id');
+  return n && n.trim() ? n.trim() : null;
+}
+
+// Names used so far this import — ThorVG looks up layers by NAME (duplicates break
+// hit-testing/getLayerBoundingBox), and SVGs routinely repeat names (Figma exports many
+// paths as "Vector"). Disambiguate collisions with a numeric suffix, like AE/Figma do.
+let _usedNames = new Set<string>();
+function uniqueName(base: string): string {
+  let name = base;
+  let i = 2;
+  while (_usedNames.has(name)) name = `${base} ${i++}`;
+  _usedNames.add(name);
+  return name;
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export class SvgImporter {
@@ -118,6 +138,9 @@ export class SvgImporter {
   static async importFromString(
     svgString: string,
     duration = 100000,
+    // Display name for the placed root (group or precomp) — usually the source file name
+    // without extension. Inner layers keep their own SVG id/label names. Falls back to 'svg'.
+    rootName = 'svg',
   ): Promise<SceneNode[]> {
     if (typeof window === 'undefined') return [];
 
@@ -162,6 +185,8 @@ export class SvgImporter {
     );
     _layeredMode = hasBlur || hasMatteRefs;
     _nameSeq = 0;
+    // Seed used-names with the root name so a leaf can't collide with it.
+    _usedNames = new Set<string>([rootName]);
 
     try {
       const gradients = parseGradients(svgEl);
@@ -176,7 +201,7 @@ export class SvgImporter {
       // the whole import as a single unit (fixes resize/rotate jitter).
       const rootGroup: SceneNode = {
         id: rootId,
-        name: 'svg',
+        name: rootName,
         type: 'group',
         parentId: null,
         children: [],
@@ -211,7 +236,7 @@ export class SvgImporter {
       // import as a precomp whose internal comp holds each shape as its own layer, so
       // blur and editable mattes work. Plain SVGs keep the flat path.
       if (_layeredMode) {
-        return buildPrecompFromFlat(nodes, vbW, vbH, duration);
+        return buildPrecompFromFlat(nodes, vbW, vbH, duration, rootName);
       }
 
       return nodes;
@@ -260,7 +285,7 @@ function makePrecompNode(
 // silhouette edits the whole group and stays crisp over blurred content (ThorVG-probed).
 // Reuses everything the flat import computed (geometry, gradients, normalized anchors).
 function buildPrecompFromFlat(
-  nodes: SceneNode[], vbW: number, vbH: number, duration: number,
+  nodes: SceneNode[], vbW: number, vbH: number, duration: number, rootName = 'svg',
 ): SceneNode[] {
   const byId = new Map(nodes.map(n => [n.id, n]));
   const outerCompId = makeId('comp');
@@ -317,7 +342,6 @@ function buildPrecompFromFlat(
   // leaves around matte buckets would permute the painting order of overlapping shapes.
   const layers: SceneNode[] = []; // direct children of the (single) comp
   const matteNodes = new Map<string, SceneNode>();
-  let maskCount = 0;
   for (const n of nodes) {
     if (n.type !== 'path' && n.type !== 'image') continue;
     const fx = [...(n.style.effects || []), ...ancestorEffects(n)];
@@ -335,9 +359,9 @@ function buildPrecompFromFlat(
       if (!matteNode) {
         matteNode = makeMattePath(matte, outerCompId, duration);
         // Unique names: ThorVG getLayerBoundingBox / hit testing look up layers by NAME
-        // and skip duplicates, so multiple mattes must not all be called "Mask".
-        maskCount++;
-        if (maskCount > 1) matteNode.name = `Mask ${maskCount}`;
+        // and skip duplicates, so multiple mattes must not all be called "Mask" (and must
+        // not collide with a leaf that happens to be named "Mask").
+        matteNode.name = uniqueName('Mask');
         matteNode.matteTargetIds = [];
         matteNodes.set(key, matteNode);
       }
@@ -366,8 +390,8 @@ function buildPrecompFromFlat(
   }
   const cw = vbW * S, ch = vbH * S;
 
-  const outerComp = makeCompArtboard(outerCompId, 'svg', cw, ch, duration, layers.map(l => l.id));
-  const precomp = makePrecompNode(makeId('precomp'), 'svg', null, outerCompId, cw, ch, duration, true);
+  const outerComp = makeCompArtboard(outerCompId, rootName, cw, ch, duration, layers.map(l => l.id));
+  const precomp = makePrecompNode(makeId('precomp'), rootName, null, outerCompId, cw, ch, duration, true);
 
   return [precomp, outerComp, ...layers];
 }
@@ -468,7 +492,7 @@ async function walkEl(
 
     const groupNode: SceneNode = {
       id,
-      name: el.getAttribute('id') || el.getAttribute('inkscape:label') || 'g',
+      name: uniqueName(svgElName(el) || 'g'),
       type: 'group',
       parentId,
       children: [],
@@ -577,7 +601,7 @@ async function walkEl(
 
     nodes.push({
       id: makeId(tag),
-      name: el.getAttribute('id') || `${tag} ${++_nameSeq}`,
+      name: uniqueName(svgElName(el) || `${tag} ${++_nameSeq}`),
       type: 'path',
       parentId,
       children: [],
@@ -614,7 +638,7 @@ async function walkEl(
 
     const imgNode: SceneNode = {
       id: makeId('image'),
-      name: el.getAttribute('id') || `image ${++_nameSeq}`,
+      name: uniqueName(svgElName(el) || `image ${++_nameSeq}`),
       type: 'image',
       parentId,
       children: [],

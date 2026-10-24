@@ -12,6 +12,12 @@ import {
   ChevronDown, Activity, Minus, ArrowRight, ArrowLeft, Layers, Sliders, Eye, EyeOff, Plus, Diamond, Trash2,
   RotateCcw
 } from 'lucide-react';
+import {
+  Eye as PhEye, EyeSlash as PhEyeSlash, CaretDown as PhCaretDown, Clock as PhClock, LinkSimple as PhLinkSimple,
+  AlignLeft as PhAlignLeft, AlignCenterHorizontal as PhAlignCenterH, AlignRight as PhAlignRight,
+  AlignTop as PhAlignTop, AlignCenterVertical as PhAlignCenterV, AlignBottom as PhAlignBottom,
+  Rows as PhRows, Columns as PhColumns, Plus as PhPlus, Minus as PhMinus, Faders as PhFaders,
+} from '@phosphor-icons/react';
 import FontPicker from './FontPicker';
 import { getAvailableWeights, weightLabel, loadFontCSS } from '@/lib/creator/fonts/GoogleFontsService';
 import PaintPopover from './PaintPopover';
@@ -38,6 +44,12 @@ export default function InspectorPanel() {
 
   const [matteExpanded, setMatteExpanded] = useState(false);
   const [trimPathExpanded, setTrimPathExpanded] = useState(false);
+  // Appearance is collapsed by default; Fill is open by default once Appearance is expanded.
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const [fillOpen, setFillOpen] = useState(true);
+  const [strokeOpen, setStrokeOpen] = useState(false);
+  const [roundnessOpen, setRoundnessOpen] = useState(false);
+  const [layerOpen, setLayerOpen] = useState(false);
   const [effectsExpanded, setEffectsExpanded] = useState(false);
   const [showPresets, setShowPresets] = useState(false);
   // Local hex string while the user is actively typing in the artboard color field.
@@ -406,6 +418,85 @@ export default function InspectorPanel() {
     );
   };
 
+  // Figma-style Transform input: #383838 field, left-aligned value with an optional
+  // prefix slot (X/Y) and suffix (°/%), drag-to-scrub + click-to-edit. Multi-select aware.
+  const renderXform = (path: string, options: { step?: number, min?: number, max?: number, prefix?: string, suffix?: string, displayFactor?: number, defaultValue?: number } = {}) => {
+    const { step = 1, min, max, prefix, suffix, displayFactor = 1, defaultValue = 0 } = options;
+    let val = getCommonValue(path);
+    if (val === undefined) val = defaultValue;
+    const isMixed = val === 'mixed';
+    return (
+      <XformInput
+        value={isMixed ? 0 : (val as number)}
+        isMixed={isMixed}
+        prefix={prefix}
+        suffix={suffix}
+        step={step}
+        min={min}
+        max={max}
+        displayFactor={displayFactor}
+        onChange={(newVal: number, recordHistory?: boolean) => {
+          const targets = selectedIds.length > 0 ? selectedIds : (previewNode ? [previewNode.id] : []);
+          targets.forEach(targetId => setNodeProperty(targetId, path, newVal, { recordHistory }));
+        }}
+      />
+    );
+  };
+
+  // Figma swatch + hex field (140px) that opens the paint/gradient picker. Shared by the
+  // Appearance Fill and Stroke Color rows so both behave identically.
+  const paintColorField = (colorPath: string, typePath: string, gradientPath: string) => {
+    const LBL: React.CSSProperties = { fontFamily: 'Inter, sans-serif', fontWeight: 450, fontSize: 12, lineHeight: '16px', letterSpacing: '0.005em', color: '#FFFFFF' };
+    const nodeSize = (() => {
+      if (!selectedNode) return undefined;
+      if (selectedNode.type === 'rect') return { width: selectedNode.props?.width || 100, height: selectedNode.props?.height || 100 };
+      if (selectedNode.type === 'ellipse') return { width: (selectedNode.props?.radiusX || 50) * 2, height: (selectedNode.props?.radiusY || 50) * 2 };
+      return undefined;
+    })();
+    const uniqueColors = getUniqueColors(colorPath);
+    const colorValue = getCommonValue(colorPath);
+    const typeValue = getCommonValue(typePath) as any;
+    const isMixed = typeValue === 'mixed' || colorValue === 'mixed' || uniqueColors.length > 1;
+    const type: 'solid' | 'gradient' = (typeValue === 'mixed' || !typeValue) ? 'solid' : typeValue;
+    const gradient = getCommonValue(gradientPath) as Gradient;
+    const pickerColor = colorValue === 'mixed' ? (uniqueColors[0] || '#FF335A') : (colorValue as string || '#FF335A');
+    const preview = () => {
+      if (isMixed) return 'conic-gradient(#333 90deg, #444 90deg 180deg, #333 180deg 270deg, #444 270deg)';
+      if (type === 'solid') return (colorValue as string) || '#000000';
+      const sorted = [...(gradient?.stops || [])].sort((a, b) => a.offset - b.offset);
+      return `linear-gradient(to right, ${sorted.map(s => `${s.color} ${s.offset * 100}%`).join(', ')})`;
+    };
+    const label = isMixed ? 'Mixed' : (type === 'solid' ? ((colorValue as string) || '').replace('#', '').toUpperCase() : (gradient?.type === 'linear' ? 'Linear' : 'Radial'));
+    return (
+      <div className="shrink-0" style={{ width: 140 }}>
+        <PaintPopover
+          type={type}
+          color={pickerColor}
+          gradient={gradient}
+          groupColors={uniqueColors}
+          nodeSize={nodeSize}
+          onChange={(updates) => {
+            if (updates.originalColor && updates.color) {
+              replaceColorInSelection(colorPath, updates.originalColor, updates.color);
+            } else {
+              if (updates.type) handleChange(typePath, updates.type);
+              if (updates.color) handleChange(colorPath, updates.color);
+              if (updates.gradient) handleChange(gradientPath, updates.gradient);
+            }
+          }}
+          trigger={
+            <div className="flex items-center cursor-pointer w-full" style={{ height: 32, background: '#383838', borderRadius: 6 }}>
+              <div className="flex items-center justify-center shrink-0" style={{ width: 24, height: 32 }}>
+                <div style={{ width: 14, height: 14, borderRadius: 2, border: '1px solid rgba(255,255,255,0.1)', background: preview() }} />
+              </div>
+              <span className="flex-1 min-w-0 truncate" style={{ ...LBL, paddingRight: 8 }}>{label}</span>
+            </div>
+          }
+        />
+      </div>
+    );
+  };
+
   const getUniqueColors = (path: string) => {
     const targets = selectedIds.length > 0
       ? selectedIds.map(id => nodes.get(id)).filter(Boolean)
@@ -693,246 +784,127 @@ export default function InspectorPanel() {
   return (
     <div className="w-full h-full flex flex-col overflow-y-auto custom-scrollbar select-none pb-12 min-h-0" style={{ background: '#2C2C2C' }}>
 
-      {/* Alignment Bar */}
-      {selectedIds.length > 0 && isRectOrEllipseOrPath && (
-        <div className="px-4 py-3 flex items-center justify-between bg-black/10" style={{ borderBottom: '1px solid rgba(221,234,248,0.08)' }}>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => useCreatorStore.getState().alignSelectedNodes('left')}
-              className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-hover text-white/40 hover:text-white/80 transition-all"
-              title="Align Left"
-            >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M2 2V12" />
-                <path d="M5 4H12" />
-                <path d="M5 10H9" />
-              </svg>
-            </button>
-            <button
-              onClick={() => useCreatorStore.getState().alignSelectedNodes('center-h')}
-              className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-hover text-white/40 hover:text-white/80 transition-all"
-              title="Align Horizontal Center"
-            >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M7 1V13" />
-                <path d="M3 4H11" />
-                <path d="M4 10H10" />
-              </svg>
-            </button>
-            <button
-              onClick={() => useCreatorStore.getState().alignSelectedNodes('right')}
-              className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-hover text-white/40 hover:text-white/80 transition-all"
-              title="Align Right"
-            >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 2V12" />
-                <path d="M2 4H9" />
-                <path d="M5 10H9" />
-              </svg>
-            </button>
+      {/* Alignment Bar — Phosphor regular (stroke) icons in a segmented control */}
+      {selectedIds.length > 0 && isRectOrEllipseOrPath && (() => {
+        const ALIGN_BTN = 'flex-1 flex items-center justify-center transition-colors bg-[#383838] hover:bg-[#454545] text-white/70 hover:text-white disabled:opacity-40 disabled:hover:bg-[#383838] disabled:hover:text-white/70';
+        const GROUP: React.CSSProperties = { gap: 1, borderRadius: 6, overflow: 'hidden' };
+        const align = (a: any) => useCreatorStore.getState().alignSelectedNodes(a);
+        const distribute = (d: any) => useCreatorStore.getState().distributeSelectedNodes(d);
+        const canDistribute = selectedIds.length >= 3;
+        return (
+          <div className="flex items-center" style={{ padding: '8px 10px', gap: 8, borderBottom: '1px solid #444444' }}>
+            {/* Horizontal alignment */}
+            <div className="flex" style={{ ...GROUP, flex: 3 }}>
+              <button className={ALIGN_BTN} style={{ height: 28 }} title="Align Left" onClick={() => align('left')}><PhAlignLeft size={16} /></button>
+              <button className={ALIGN_BTN} style={{ height: 28 }} title="Align Horizontal Center" onClick={() => align('center-h')}><PhAlignCenterH size={16} /></button>
+              <button className={ALIGN_BTN} style={{ height: 28 }} title="Align Right" onClick={() => align('right')}><PhAlignRight size={16} /></button>
+            </div>
+            {/* Vertical alignment */}
+            <div className="flex" style={{ ...GROUP, flex: 3 }}>
+              <button className={ALIGN_BTN} style={{ height: 28 }} title="Align Top" onClick={() => align('top')}><PhAlignTop size={16} /></button>
+              <button className={ALIGN_BTN} style={{ height: 28 }} title="Align Vertical Center" onClick={() => align('center-v')}><PhAlignCenterV size={16} /></button>
+              <button className={ALIGN_BTN} style={{ height: 28 }} title="Align Bottom" onClick={() => align('bottom')}><PhAlignBottom size={16} /></button>
+            </div>
+            {/* Distribute */}
+            <div className="flex" style={{ ...GROUP, flex: 2 }}>
+              <button className={ALIGN_BTN} style={{ height: 28 }} title="Distribute Horizontal Space" disabled={!canDistribute} onClick={() => distribute('horizontal')}><PhColumns size={16} /></button>
+              <button className={ALIGN_BTN} style={{ height: 28 }} title="Distribute Vertical Space" disabled={!canDistribute} onClick={() => distribute('vertical')}><PhRows size={16} /></button>
+            </div>
           </div>
-
-          <div className="w-[1px] h-4 bg-white/5 mx-1" />
-
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => useCreatorStore.getState().alignSelectedNodes('top')}
-              className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-hover text-white/40 hover:text-white/80 transition-all"
-              title="Align Top"
-            >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M2 2H12" />
-                <path d="M4 5V12" />
-                <path d="M10 5V9" />
-              </svg>
-            </button>
-            <button
-              onClick={() => useCreatorStore.getState().alignSelectedNodes('center-v')}
-              className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-hover text-white/40 hover:text-white/80 transition-all"
-              title="Align Vertical Center"
-            >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M1 7H13" />
-                <path d="M4 3V11" />
-                <path d="M10 4V10" />
-              </svg>
-            </button>
-            <button
-              onClick={() => useCreatorStore.getState().alignSelectedNodes('bottom')}
-              className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-hover text-white/40 hover:text-white/80 transition-all"
-              title="Align Bottom"
-            >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M2 12H12" />
-                <path d="M4 2V9" />
-                <path d="M10 5V9" />
-              </svg>
-            </button>
-          </div>
-
-          <div className="w-[1px] h-4 bg-white/5 mx-1" />
-
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => useCreatorStore.getState().distributeSelectedNodes('horizontal')}
-              disabled={selectedIds.length < 3}
-              className={`w-7 h-7 flex items-center justify-center rounded-md transition-all ${selectedIds.length < 3 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-hover text-white/40 hover:text-white/80'}`}
-              title="Distribute Horizontal Space"
-            >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M2 2V12" />
-                <path d="M12 2V12" />
-                <rect x="5.5" y="4" width="3" height="6" rx="0.5" />
-              </svg>
-            </button>
-            <button
-              onClick={() => useCreatorStore.getState().distributeSelectedNodes('vertical')}
-              disabled={selectedIds.length < 3}
-              className={`w-7 h-7 flex items-center justify-center rounded-md transition-all ${selectedIds.length < 3 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-hover text-white/40 hover:text-white/80'}`}
-              title="Distribute Vertical Space"
-            >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M2 2H12" />
-                <path d="M2 12H12" />
-                <rect x="4" y="5.5" width="6" height="3" rx="0.5" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
 
-      {/* Keyframe Easing Section - Appears at TOP when keyframes are selected */}
+      {/* Keyframe Easing Section — replaces the property sections while keyframes are selected */}
       <KeyframeEasingSection />
 
-      {selectedNode && selectedNode.type !== 'artboard' && (
+      {selectedNode && selectedNode.type !== 'artboard' && selectedKeyframeIds.length === 0 && (
         <>
-          {/* Transform Section */}
-          <div className="px-3 py-3 space-y-4" style={{ borderBottom: '1px solid rgba(221,234,248,0.08)' }}>
-            <div className="flex items-center justify-between">
-              <h3 className="text-[11px] font-semibold">Transform</h3>
-              {/* Anchor Grid */}
-              <div className="grid grid-cols-3 gap-[1.5px] bg-white/[0.02] p-[2px] rounded border border-[rgba(221,234,248,0.08)]">
-                {['top-left', 'top-center', 'top-right',
-                  'center-left', 'center', 'center-right',
-                  'bottom-left', 'bottom-center', 'bottom-right'].map((p) => (
-                    <button
-                      key={p}
-                      onClick={() => handleAnchorChange(p as any)}
-                      className={`w-2.5 h-2.5 rounded-[1px] transition-all ${isAnchorSelected(p)
-                        ? 'bg-accent'
-                        : 'bg-white/5 hover:bg-white/20'
-                        }`}
-                      title={p.replace('-', ' ')}
-                    />
-                  ))}
-              </div>
-            </div>
+          {/* Transform Section — label-left + diamond keyframe, input-right (Figma) */}
+          {(() => {
+            const TF_LABEL: React.CSSProperties = { fontFamily: 'Inter, sans-serif', fontWeight: 450, fontSize: 12, lineHeight: '16px', letterSpacing: '0.005em', color: '#FFFFFF' };
+            const linkOn = !!selectedNode.transform?.scaleLink;
+            const xformTargets = () => (selectedIds.length > 0 ? selectedIds : (previewNode ? [previewNode.id] : []));
+            return (
+              <div className="flex flex-col" style={{ padding: '10px 0', gap: 10, borderBottom: '1px solid #444444' }}>
+                {/* Section label */}
+                <div style={{ padding: '0 10px' }}>
+                  <span style={TF_LABEL}>Transform</span>
+                </div>
 
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-[11px] pl-0.5">Position</label>
-                <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
-                  {renderNumberInput('transform.x', { prefix: 'X' })}
-                  <div className="w-px h-3 bg-white/5 mx-1" />
-                  {renderNumberInput('transform.y', { prefix: 'Y' })}
-                  {selectedNode && (
-                    <>
-                      <div className="w-[1px] h-3 bg-white/10 mx-1" />
-                      <MultiStopwatchButton nodeId={selectedNode.id} paths={['transform.x', 'transform.y']} />
-                    </>
-                  )}
+                {/* Position */}
+                <div className="flex items-center justify-between" style={{ padding: '0 10px' }}>
+                  <div className="flex items-center min-w-0">
+                    <KeyframeDiamond nodeId={selectedNode.id} paths={['transform.x', 'transform.y']} />
+                    <span className="truncate" style={TF_LABEL}>Position</span>
+                  </div>
+                  <div className="flex items-center shrink-0" style={{ gap: 6, width: 150 }}>
+                    {renderXform('transform.x', { prefix: 'X' })}
+                    {renderXform('transform.y', { prefix: 'Y' })}
+                  </div>
+                </div>
+
+                {/* Scale */}
+                <div className="flex items-center justify-between" style={{ padding: '0 10px' }}>
+                  <div className="flex items-center min-w-0">
+                    <KeyframeDiamond nodeId={selectedNode.id} paths={['transform.scaleX', 'transform.scaleY']} />
+                    <span className="truncate" style={TF_LABEL}>Scale</span>
+                  </div>
+                  <div className="flex items-center shrink-0" style={{ gap: 6, width: 150 }}>
+                    {renderXform('transform.scaleX', { suffix: '%', displayFactor: 100 })}
+                    <button
+                      onClick={() => xformTargets().forEach(t => setNodeProperty(t, 'transform.scaleLink', !linkOn))}
+                      className="flex items-center justify-center shrink-0"
+                      style={{ width: 20, height: 32 }}
+                      title={linkOn ? 'Proportions linked' : 'Proportions unlinked'}
+                    >
+                      <PhLinkSimple size={14} weight="regular" color={linkOn ? '#FFFFFF' : 'rgba(255,255,255,0.4)'} />
+                    </button>
+                    {renderXform('transform.scaleY', { suffix: '%', displayFactor: 100 })}
+                  </div>
+                </div>
+
+                {/* Rotation */}
+                <div className="flex items-center justify-between" style={{ padding: '0 10px' }}>
+                  <div className="flex items-center min-w-0">
+                    <KeyframeDiamond nodeId={selectedNode.id} paths={['transform.rotation']} />
+                    <span className="truncate" style={TF_LABEL}>Rotation</span>
+                  </div>
+                  <div className="flex items-center shrink-0" style={{ width: 72 }}>
+                    {renderXform('transform.rotation', { suffix: '°' })}
+                  </div>
+                </div>
+
+                {/* Opacity */}
+                <div className="flex items-center justify-between" style={{ padding: '0 10px' }}>
+                  <div className="flex items-center min-w-0">
+                    <KeyframeDiamond nodeId={selectedNode.id} paths={['style.opacity']} />
+                    <span className="truncate" style={TF_LABEL}>Opacity</span>
+                  </div>
+                  <div className="flex items-center shrink-0" style={{ width: 72 }}>
+                    {renderXform('style.opacity', { suffix: '%', displayFactor: 100, min: 0, max: 1 })}
+                  </div>
+                </div>
+
+                {/* Anchor Point — 3×3 grid, center blue by default */}
+                <div className="flex items-start justify-between" style={{ padding: '0 10px' }}>
+                  <span className="shrink-0" style={{ ...TF_LABEL, marginTop: 8 }}>Anchor Point</span>
+                  <div className="shrink-0" style={{ width: 140, padding: 8, background: '#2C2C2C', border: '1px solid #383838', borderRadius: 6 }}>
+                    <div className="grid grid-cols-3">
+                      {['top-left', 'top-center', 'top-right', 'center-left', 'center', 'center-right', 'bottom-left', 'bottom-center', 'bottom-right'].map(p => (
+                        <button key={p} onClick={() => handleAnchorChange(p as any)} className="flex items-center justify-center group" style={{ height: 24 }} title={p.replace('-', ' ')}>
+                          <div
+                            className={`rounded-full transition-colors ${isAnchorSelected(p) ? '' : 'bg-[#383838] group-hover:bg-white/25'}`}
+                            style={{ width: 11, height: 11, ...(isAnchorSelected(p) ? { background: '#0A6DC2' } : {}) }}
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
-
-              {!isOnlyPrimitivesSelected && (
-                <>
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] pl-0.5">Scale</label>
-                    <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
-                      {renderNumberInput('transform.scaleX', { prefix: 'W', displayFactor: 100 })}
-                      <button
-                        onClick={() => setNodeProperty(selectedNode.id, 'transform.scaleLink', !selectedNode.transform?.scaleLink)}
-                        className={`p-1 mx-0.5 rounded transition-colors ${selectedNode.transform?.scaleLink ? 'text-accent bg-accent/15' : 'text-white/10 hover:text-white/30'}`}
-                      >
-                        <Link2 size={12} />
-                      </button>
-                      {renderNumberInput('transform.scaleY', { prefix: 'H', displayFactor: 100 })}
-                      {selectedNode && (
-                        <>
-                          <div className="w-[1px] h-3 bg-white/10 mx-1" />
-                          <MultiStopwatchButton nodeId={selectedNode.id} paths={['transform.scaleX', 'transform.scaleY']} />
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-4">
-                    <div className="flex-1 space-y-1.5">
-                      <label className="text-[11px] pl-0.5">Rotation</label>
-                      <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
-                        {renderNumberInput('transform.rotation', { prefix: '°', step: 1 })}
-                        {selectedNode && (
-                          <>
-                            <div className="w-[1px] h-3 bg-white/10 mx-1" />
-                            <StopwatchButton nodeId={selectedNode.id} path="transform.rotation" />
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex-1 space-y-1.5">
-                      <label className="text-[11px] pl-0.5">Opacity</label>
-                      <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
-                        {renderNumberInput('style.opacity', { prefix: '%', step: 1.0, min: 0, max: 1, displayFactor: 100 })}
-                        {selectedNode && (
-                          <>
-                            <div className="w-[1px] h-3 bg-white/10 mx-1" />
-                            <StopwatchButton nodeId={selectedNode.id} path="style.opacity" />
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] pl-0.5" style={{ color: 'rgba(241,247,254,0.50)' }}>Blend Mode</label>
-                    <div className="relative">
-                      <button
-                        onClick={() => setShowBlendMode(v => !v)}
-                        className="w-full h-8 flex items-center justify-between rounded-[4px] px-3"
-                        style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(217,237,255,0.25)' }}
-                      >
-                        <span className="text-[13px] capitalize" style={{ color: 'rgba(229,237,253,0.80)' }}>
-                          {((getCommonValue('style.blendMode') as string) || 'normal').replace(/-/g, ' ')}
-                        </span>
-                        <ChevronDown size={14} style={{ color: 'rgba(229,237,253,0.48)', flexShrink: 0 }} />
-                      </button>
-                      {showBlendMode && (
-                        <>
-                          <div className="fixed inset-0 z-[99]" onClick={() => setShowBlendMode(false)} />
-                          <div
-                            className="absolute top-full left-0 right-0 mt-1 z-[100] rounded-[4px] overflow-y-auto"
-                            style={{ background: '#27292C', border: '1px solid rgba(221,234,248,0.08)', boxShadow: '0 8px 24px rgba(0,0,0,0.4)', maxHeight: 220 }}
-                          >
-                            {['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'].map(mode => (
-                              <button
-                                key={mode}
-                                className="w-full text-left px-3 py-2 text-[13px] capitalize hover:bg-white/5 transition-colors"
-                                style={{ color: ((getCommonValue('style.blendMode') as string) || 'normal') === mode ? 'var(--accent)' : '#EDEEF0' }}
-                                onClick={() => { handleChange('style.blendMode', mode); setShowBlendMode(false); }}
-                              >
-                                {mode.replace(/-/g, ' ')}
-                              </button>
-                            ))}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
+            );
+          })()}
 
           {/* Boolean Operations Section - Only when 2+ shapes selected */}
           {selectedIds.length >= 2 && (
@@ -993,20 +965,7 @@ export default function InspectorPanel() {
                       </div>
                     </div>
 
-                    {(hasSelectionType('rect') || hasSelectionType('path')) && (
-                      <div className="space-y-1.5">
-                        <label className="text-[11px] pl-0.5">Roundness</label>
-                        <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
-                          {renderNumberInput('props.roundness', { step: 1, min: 0 })}
-                          {selectedNode && (
-                            <>
-                              <div className="w-[1px] h-3 bg-white/10 mx-1" />
-                              <StopwatchButton nodeId={selectedNode.id} path="props.roundness" />
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    )}
+                    {/* Roundness moved to the Appearance section. */}
                   </div>
                 )}
 
@@ -1343,349 +1302,307 @@ export default function InspectorPanel() {
             </div>
           )}
 
-          {/* Style Section */}
-          {(!selectedNode || selectedNode.type !== 'image') && !isOnlyPrimitivesSelected && (
-            <div className="px-3 py-3 space-y-4" style={{ borderBottom: '1px solid rgba(221,234,248,0.08)' }}>
-              <h3 className="text-[11px] font-semibold">Appearance</h3>
-              <div className="space-y-6">
-                {renderPaintRow('Fill', 'style.fill', 'style.fillType', 'style.fillGradient', 'style.fillOpacity', 'style.fillVisible')}
-                <div className="space-y-4 pt-4 border-t border-[rgba(221,234,248,0.08)]">
-                  {renderPaintRow('Stroke', 'style.stroke', 'style.strokeType', 'style.strokeGradient')}
+          {/* Appearance Section — collapsible (closed by default); Fill open by default */}
+          {(!selectedNode || selectedNode.type !== 'image') && !isOnlyPrimitivesSelected && (() => {
+            const AP_LABEL: React.CSSProperties = { fontFamily: 'Inter, sans-serif', fontWeight: 450, fontSize: 12, lineHeight: '16px', letterSpacing: '0.005em', color: '#FFFFFF' };
+            const TOGGLE = 'rgba(255,255,255,0.5)';
 
-                  {/* New Stroke Settings Grid */}
-                  {selectedNode?.style?.stroke !== undefined && (
-                    <div className="space-y-2">
-                      {/* Row 2: Weight & Alignment */}
-                      <div className="flex gap-2">
-                        <div className="flex-[4] space-y-1.5">
-                          <label className="text-[11px] pl-0.5">Width</label>
-                          <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
-                            {renderNumberInput('style.strokeWidth', { prefix: 'W', min: 0, step: 1 })}
-                            {selectedNode && (
-                              <>
-                                <div className="w-[1px] h-3 bg-white/10 mx-1" />
-                                <StopwatchButton nodeId={selectedNode.id} path="style.strokeWidth" />
-                              </>
-                            )}
-                          </div>
-                        </div>
+            // Stroke state — drives add-vs-toggle and the dashed sub-settings.
+            const hasStroke = !!(selectedNode!.style?.stroke && selectedNode!.style.stroke !== 'none');
+            // NOTE: ''.split(/\s+/) === [''] and Number('') === 0, so an empty dash must be
+            // guarded explicitly — otherwise a solid stroke parses as [0] and reads as "Dashed".
+            const dashStr = String(getCommonValue('style.strokeDash') || '').trim();
+            const dashArr = dashStr ? dashStr.split(/\s+/).map(Number).filter(n => !isNaN(n)) : [];
+            const isDashed = dashArr.length > 0;
+            const dashLen = dashArr[0] || 10;
+            const gapLen = dashArr[1] ?? dashArr[0] ?? 10;
+            const showRoundness = selectedNode!.type === 'rect' || selectedNode!.type === 'path';
+            const addStroke = () => {
+              const targets = selectedIds.length > 0 ? selectedIds : (previewNode ? [previewNode.id] : []);
+              useCreatorStore.getState().pushToHistory('Add Stroke');
+              targets.forEach(t => {
+                const n = nodes.get(t);
+                setNodeProperty(t, 'style.stroke', '#000000', { recordHistory: false });
+                setNodeProperty(t, 'style.strokeType', 'solid', { recordHistory: false });
+                setNodeProperty(t, 'style.strokeWidth', 2, { recordHistory: false });
+                setNodeProperty(t, 'style.strokeOpacity', 1, { recordHistory: false });
+                if (n?.style?.strokeLinecap === undefined) setNodeProperty(t, 'style.strokeLinecap', 'round', { recordHistory: false });
+                if (n?.style?.strokeLinejoin === undefined) setNodeProperty(t, 'style.strokeLinejoin', 'round', { recordHistory: false });
+              });
+              setStrokeOpen(true);
+            };
 
-                        <div className="flex-[5] space-y-1.5">
-                          <label className="text-[11px] pl-0.5">Line Cap</label>
-                          <div className="flex items-center rounded-[4px] px-2 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
-                            <select
-                              value={getCommonValue('style.strokeLinecap') as string || 'round'}
-                              onChange={(e) => handleChange('style.strokeLinecap', e.target.value)}
-                              className="flex-1 bg-transparent border-none text-[11px] font-bold text-white/60 outline-none cursor-pointer appearance-none"
-                            >
-                              <option value="butt" className="bg-surface">Butt</option>
-                              <option value="round" className="bg-surface">Round</option>
-                              <option value="square" className="bg-surface">Square</option>
-                            </select>
-                            <ChevronDown size={12} className="text-white/20 pointer-events-none" />
-                          </div>
-                        </div>
-                      </div>
+            const collapseBtn = (open: boolean, onClick: () => void) => (
+              <button onClick={(e) => { e.stopPropagation(); onClick(); }} className="flex items-center justify-center shrink-0" style={{ width: 24, height: 24 }}>
+                {open ? <PhMinus size={14} color={TOGGLE} /> : <PhPlus size={14} color={TOGGLE} />}
+              </button>
+            );
 
-                      {/* Row 3: Opacity & Line Join */}
-                      <div className="flex gap-2">
-                        <div className="flex-[4] space-y-1.5">
-                          <label className="text-[11px] pl-0.5">Opacity</label>
-                          <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
-                            {renderNumberInput('style.strokeOpacity', { prefix: '%', min: 0, max: 1, step: 1, displayFactor: 100 })}
-                            {selectedNode && (
-                              <>
-                                <div className="w-[1px] h-3 bg-white/10 mx-1" />
-                                <StopwatchButton nodeId={selectedNode.id} path="style.strokeOpacity" />
-                              </>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex-[5] space-y-1.5">
-                          <label className="text-[11px] pl-0.5">Line Join</label>
-                          <div className="flex items-center rounded-[4px] px-2 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
-                            <select
-                              value={getCommonValue('style.strokeLinejoin') as string || 'round'}
-                              onChange={(e) => handleChange('style.strokeLinejoin', e.target.value)}
-                              className="flex-1 bg-transparent border-none text-[11px] font-bold text-white/60 outline-none cursor-pointer appearance-none"
-                            >
-                              <option value="miter" className="bg-surface">Miter</option>
-                              <option value="round" className="bg-surface">Round</option>
-                              <option value="bevel" className="bg-surface">Bevel</option>
-                            </select>
-                            <ChevronDown size={12} className="text-white/20 pointer-events-none" />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Row 4: Style (Solid/Dash) */}
-                      <div className="flex gap-2">
-                        <div className="flex-[9] space-y-1.5">
-                          <label className="text-[11px] pl-0.5">Style</label>
-                          <div className="flex items-center rounded-[4px] px-2 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
-                            <select
-                              value={(getCommonValue('style.strokeDash') || '').length > 0 ? 'dashed' : 'solid'}
-                              onChange={(e) => {
-                                if (e.target.value === 'solid') handleChange('style.strokeDash', '');
-                                else handleChange('style.strokeDash', '10 10');
-                              }}
-                              className="flex-1 bg-transparent border-none text-[11px] font-bold text-white/60 outline-none cursor-pointer appearance-none"
-                            >
-                              <option value="solid" className="bg-surface">Solid</option>
-                              <option value="dashed" className="bg-surface">Dashed</option>
-                            </select>
-
-                            <div className="flex items-center gap-1">
-                              <DashPopover
-                                dashArray={getCommonValue('style.strokeDash') as string || ''}
-                                onChange={(val) => handleChange('style.strokeDash', val)}
-                                trigger={
-                                  <button
-                                    className={`p-1.5 rounded transition-all active:scale-95 ${(getCommonValue('style.strokeDash') || '').length > 0
-                                      ? 'text-accent hover:bg-accent/15'
-                                      : 'text-white/10 hover:text-white/30 pointer-events-none opacity-0'
-                                      }`}
-                                  >
-                                    <Sliders size={12} strokeWidth={2.5} />
-                                  </button>
-                                }
-                              />
-                              {(getCommonValue('style.strokeDash') || '').length > 0 && (
-                                <div className="w-px h-3 bg-white/10" />
-                              )}
-                            </div>
-                            <ChevronDown size={12} className="text-white/20 mr-2 pointer-events-none" />
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+            return (
+              <div className="flex flex-col" style={{ padding: 10, gap: 10, borderBottom: '1px solid #444444' }}>
+                {/* Appearance header */}
+                <div className="flex items-center justify-between cursor-pointer" onClick={() => setAppearanceOpen(v => !v)}>
+                  <span style={AP_LABEL}>Appearance</span>
+                  {collapseBtn(appearanceOpen, () => setAppearanceOpen(v => !v))}
                 </div>
-              </div>
-            </div>
-          )}
 
-          {/* Trim Path Section */}
-          {isRectOrEllipseOrPath && (!selectedNode || selectedNode.type !== 'image') && !isOnlyPrimitivesSelected && (
-            <div className="px-3 py-3 space-y-4" style={{ borderBottom: '1px solid rgba(221,234,248,0.08)' }}>
-              <div
-                className="flex items-center justify-between cursor-pointer"
-                onClick={() => setTrimPathExpanded(!trimPathExpanded)}
-              >
-                <h3 className="text-[11px] font-semibold">Trim Path</h3>
-                <button className="w-5 h-5 flex items-center justify-center text-white/30 hover:text-white/60 transition-colors">
-                  {trimPathExpanded ? <Minus size={12} /> : <Plus size={12} />}
-                </button>
-              </div>
-
-              {trimPathExpanded && (
-                <div className="space-y-4">
-                  <div className="flex items-center gap-4">
-                    <div className="flex-1 space-y-1.5">
-                      <label className="text-[11px] pl-0.5">Start</label>
-                      <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
-                        {renderNumberInput('style.trimStart', { prefix: '%', min: 0, max: 1, step: 1, displayFactor: 100, defaultValue: 0 })}
-                        {selectedNode && (
-                          <>
-                            <div className="w-[1px] h-3 bg-white/10 mx-1" />
-                            <StopwatchButton nodeId={selectedNode.id} path="style.trimStart" />
-                          </>
-                        )}
+                {appearanceOpen && (
+                  <>
+                    {/* Fill */}
+                    <div className="flex flex-col" style={{ gap: 10 }}>
+                      <div className="flex items-center justify-between cursor-pointer" onClick={() => setFillOpen(v => !v)}>
+                        <span style={AP_LABEL}>Fill</span>
+                        {collapseBtn(fillOpen, () => setFillOpen(v => !v))}
                       </div>
-                    </div>
-                    <div className="flex-1 space-y-1.5">
-                      <label className="text-[11px] pl-0.5">End</label>
-                      <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
-                        {renderNumberInput('style.trimEnd', { prefix: '%', min: 0, max: 1, step: 1, displayFactor: 100, defaultValue: 1 })}
-                        {selectedNode && (
-                          <>
-                            <div className="w-[1px] h-3 bg-white/10 mx-1" />
-                            <StopwatchButton nodeId={selectedNode.id} path="style.trimEnd" />
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </div>
 
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] pl-0.5">Offset</label>
-                    <div className="flex items-center rounded-[4px] px-1 h-8 transition-all group/pod" style={{ background: 'rgba(221,234,248,0.08)', border: '1px solid rgba(214,235,253,0.19)' }}>
-                      {renderNumberInput('style.trimOffset', { prefix: '°', step: 1, defaultValue: 0 })}
-                      {selectedNode && (
-                        <>
-                          <div className="w-[1px] h-3 bg-white/10 mx-1" />
-                          <StopwatchButton nodeId={selectedNode.id} path="style.trimOffset" />
-                        </>
+                      {fillOpen && (
+                        <div className="flex flex-col" style={{ gap: 10 }}>
+                          {/* Color */}
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center min-w-0">
+                              <KeyframeDiamond nodeId={selectedNode!.id} paths={['style.fill', 'style.fillGradient']} />
+                              <span className="truncate" style={AP_LABEL}>Color</span>
+                            </div>
+                            {paintColorField('style.fill', 'style.fillType', 'style.fillGradient')}
+                          </div>
+
+                          {/* Opacity */}
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center min-w-0">
+                              <KeyframeDiamond nodeId={selectedNode!.id} paths={['style.fillOpacity']} />
+                              <span className="truncate" style={AP_LABEL}>Opacity</span>
+                            </div>
+                            <div className="flex items-center shrink-0" style={{ width: 140 }}>
+                              {renderXform('style.fillOpacity', { suffix: '%', displayFactor: 100, min: 0, max: 1, defaultValue: 1 })}
+                            </div>
+                          </div>
+                        </div>
                       )}
                     </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
 
-          {/* Effects Section */}
-          {selectedNode && (
-            <div className="px-3 py-3 space-y-4" style={{ borderBottom: '1px solid rgba(221,234,248,0.08)' }}>
-              <div
-                className="flex items-center justify-between group/header cursor-pointer select-none"
-                onClick={() => setEffectsExpanded(!effectsExpanded)}
-              >
-                <div className="flex items-center gap-2">
-                  <h3 className="text-[11px] font-semibold" style={{ color: 'rgba(241,247,254,0.50)' }}>Effects</h3>
-                </div>
-
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const count = (selectedNode.style.effects || []).length;
-                      if (count < 2) {
-                        handleAddEffect('shadow');
-                      } else {
-                        setNodeProperty(selectedNode.id, 'style.effects', [], { recordHistory: true });
-                      }
-                    }}
-                    className={`w-6 h-6 flex items-center justify-center rounded-lg transition-all active:scale-90 ${(selectedNode.style.effects || []).length >= 2
-                      ? 'text-white/20 hover:text-white/60 hover:bg-hover'
-                      : 'text-white/30 hover:text-white/60 hover:bg-hover'
-                      }`}
-                    title={(selectedNode.style.effects || []).length >= 2 ? "Clear All Effects" : "Add Effect"}
-                  >
-                    {(selectedNode.style.effects || []).length >= 2 ? <Minus size={14} /> : <Plus size={14} />}
-                  </button>
-                </div>
-              </div>
-
-              {effectsExpanded && (selectedNode.style.effects || []).length > 0 && (
-                <div className="space-y-2">
-                  <div className="space-y-1">
-                    {selectedNode.style.effects?.map((effect) => (
-                      <div
-                        key={effect.id}
-                        className="flex items-center gap-2 transition-all group/item"
-                      >
-                        <EffectPopover
-                          effect={effect}
-                          onChange={(updates) => handleEffectChange(effect.id, updates)}
-                          trigger={
-                            <button className="p-1.5 text-white/20 hover:text-white/60 hover:bg-hover rounded-lg transition-all" title="Effect Settings">
-                              <Sliders size={12} />
-                            </button>
-                          }
-                        />
-
-                        <div className="relative flex-1 group/select">
-                          <select
-                            value={effect.type}
-                            onChange={(e) => handleEffectChange(effect.id, {
-                              type: e.target.value as 'shadow' | 'blur',
-                              name: e.target.value === 'shadow' ? 'Drop Shadow' : 'Blur'
-                            })}
-                            className="w-full bg-transparent appearance-none text-[11px] font-bold text-white/60 hover:text-white transition-colors cursor-pointer outline-none py-1.5 pr-6"
-                          >
-                            <option value="shadow" className="bg-surface text-white">Drop Shadow</option>
-                            <option value="blur" className="bg-surface text-white">Blur</option>
-                            <option value="repeater" className="bg-surface text-white">Repeater</option>
-                            <option value="offset-path" className="bg-surface text-white">Offset Path</option>
-                          </select>
-                          <ChevronDown size={10} className="absolute right-2 top-1/2 -translate-y-1/2 text-white/20 pointer-events-none group-hover/select:text-white/40 transition-colors" />
-                        </div>
-
-                        <div className="flex items-center gap-1 opacity-0 group-hover/item:opacity-100 transition-all">
-                          <button
-                            onClick={() => handleToggleEffect(effect.id)}
-                            className={`p-1.5 rounded-lg transition-all ${effect.visible ? 'text-white/20 hover:text-white' : 'text-accent hover:text-accent'}`}
-                          >
-                            {effect.visible ? <Eye size={12} /> : <EyeOff size={12} />}
-                          </button>
-                          <button
-                            onClick={() => handleRemoveEffect(effect.id)}
-                            className="p-1.5 rounded-lg text-white/20 hover:text-white/60 transition-all"
-                          >
-                            <Minus size={14} />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Matte Section */}
-          {selectedNode && (
-            <div className="px-3 py-3" style={{ borderBottom: '1px solid rgba(221,234,248,0.08)' }}>
-              <div
-                className="flex items-center justify-between cursor-pointer"
-                onClick={() => setMatteExpanded(!matteExpanded)}
-              >
-                <h3 className="text-[11px] font-semibold">Matte</h3>
-                <button className="w-5 h-5 flex items-center justify-center text-white/30 hover:text-white/60 transition-colors">
-                  {matteExpanded ? <Minus size={12} /> : <Plus size={12} />}
-                </button>
-              </div>
-
-              {matteExpanded && (
-                <div className="space-y-2 mt-4">
-                  <label className="text-[11px]" style={{ color: 'rgba(241,247,254,0.50)' }}>Matte Layer</label>
-                  {(() => {
-                    const matteOptions = [
-                      { id: '', name: '(No matte)' },
-                      ...Array.from(nodes.values()).filter(n =>
-                        n.type !== 'artboard' &&
-                        n.id !== selectedNode.id &&
-                        nodes.get(n.parentId || '')?.type === 'artboard' &&
-                        (n.id === selectedNode.matteSourceId || !n.matteTargetIds || n.matteTargetIds.length === 0)
-                      ).map(n => ({ id: n.id, name: n.name }))
-                    ];
-                    const currentName = matteOptions.find(o => o.id === (selectedNode.matteSourceId || ''))?.name || '(No matte)';
-                    return (
-                      <div className="relative">
-                        <button
-                          onClick={() => setShowMatte(v => !v)}
-                          className="w-full h-8 flex items-center justify-between rounded-[4px] px-3"
-                          style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(217,237,255,0.25)' }}
-                        >
-                          <span className="text-[13px] truncate" style={{ color: 'rgba(229,237,253,0.80)' }}>{currentName}</span>
-                          <ChevronDown size={14} style={{ color: 'rgba(229,237,253,0.48)', flexShrink: 0 }} />
+                    {/* Stroke — clicking when no stroke adds a 2px black default and opens it */}
+                    <div className="flex flex-col" style={{ gap: 10 }}>
+                      <div className="flex items-center justify-between cursor-pointer" onClick={() => { if (!hasStroke) addStroke(); else setStrokeOpen(v => !v); }}>
+                        <span style={AP_LABEL}>Stroke</span>
+                        <button onClick={(e) => { e.stopPropagation(); if (!hasStroke) addStroke(); else setStrokeOpen(v => !v); }} className="flex items-center justify-center shrink-0" style={{ width: 24, height: 24 }}>
+                          {(hasStroke && strokeOpen) ? <PhMinus size={14} color={TOGGLE} /> : <PhPlus size={14} color={TOGGLE} />}
                         </button>
-                        {showMatte && (
-                          <>
-                            <div className="fixed inset-0 z-[99]" onClick={() => setShowMatte(false)} />
-                            <div
-                              className="absolute top-full left-0 right-0 mt-1 z-[100] rounded-[4px] overflow-y-auto"
-                              style={{ background: '#27292C', border: '1px solid rgba(221,234,248,0.08)', boxShadow: '0 8px 24px rgba(0,0,0,0.4)', maxHeight: 200 }}
-                            >
-                              {matteOptions.map(opt => (
-                                <button
-                                  key={opt.id}
-                                  className="w-full text-left px-3 py-2 text-[13px] hover:bg-white/5 transition-colors"
-                                  style={{ color: (selectedNode.matteSourceId || '') === opt.id ? 'var(--accent)' : '#EDEEF0' }}
-                                  onClick={() => { setMatte(selectedNode.id, opt.id || null); setShowMatte(false); }}
-                                >
-                                  {opt.name}
-                                </button>
-                              ))}
+                      </div>
+
+                      {hasStroke && strokeOpen && (
+                        <div className="flex flex-col" style={{ gap: 10 }}>
+                          {/* Color */}
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center min-w-0">
+                              <KeyframeDiamond nodeId={selectedNode!.id} paths={['style.stroke', 'style.strokeGradient']} />
+                              <span className="truncate" style={AP_LABEL}>Color</span>
                             </div>
-                          </>
+                            {paintColorField('style.stroke', 'style.strokeType', 'style.strokeGradient')}
+                          </div>
+
+                          {/* Opacity */}
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center min-w-0">
+                              <KeyframeDiamond nodeId={selectedNode!.id} paths={['style.strokeOpacity']} />
+                              <span className="truncate" style={AP_LABEL}>Opacity</span>
+                            </div>
+                            <div className="flex items-center shrink-0" style={{ width: 140 }}>
+                              {renderXform('style.strokeOpacity', { suffix: '%', displayFactor: 100, min: 0, max: 1, defaultValue: 1 })}
+                            </div>
+                          </div>
+
+                          {/* Width */}
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center min-w-0">
+                              <KeyframeDiamond nodeId={selectedNode!.id} paths={['style.strokeWidth']} />
+                              <span className="truncate" style={AP_LABEL}>Width</span>
+                            </div>
+                            <div className="flex items-center shrink-0" style={{ width: 140 }}>
+                              {renderXform('style.strokeWidth', { min: 0, defaultValue: 1 })}
+                            </div>
+                          </div>
+
+                          {/* Line Cap */}
+                          <PropDropdown label="Line Cap"
+                            value={(getCommonValue('style.strokeLinecap') as string) || 'round'}
+                            options={[{ value: 'butt', label: 'Butt' }, { value: 'round', label: 'Round' }, { value: 'square', label: 'Square' }]}
+                            onChange={(v) => handleChange('style.strokeLinecap', v)} />
+
+                          {/* Line Join */}
+                          <PropDropdown label="Line Join"
+                            value={(getCommonValue('style.strokeLinejoin') as string) || 'round'}
+                            options={[{ value: 'miter', label: 'Miter' }, { value: 'round', label: 'Round' }, { value: 'bevel', label: 'Bevel' }]}
+                            onChange={(v) => handleChange('style.strokeLinejoin', v)} />
+
+                          {/* Style (solid / dashed) */}
+                          <PropDropdown label="Style"
+                            value={isDashed ? 'dashed' : 'solid'}
+                            options={[{ value: 'solid', label: 'Solid' }, { value: 'dashed', label: 'Dashed' }]}
+                            onChange={(v) => handleChange('style.strokeDash', v === 'dashed' ? '10 10' : '')} />
+
+                          {/* Dashed sub-settings */}
+                          {isDashed && (
+                            <>
+                              <div className="flex items-center justify-between">
+                                <span className="truncate" style={AP_LABEL}>Dash</span>
+                                <div className="flex items-center shrink-0" style={{ width: 140 }}>
+                                  <XformInput value={dashLen} min={0} onChange={(v, rec) => {
+                                    const str = `${Math.max(0, Math.round(v))} ${Math.round(gapLen)}`;
+                                    (selectedIds.length > 0 ? selectedIds : (previewNode ? [previewNode.id] : [])).forEach(t => setNodeProperty(t, 'style.strokeDash', str, { recordHistory: rec }));
+                                  }} />
+                                </div>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="truncate" style={AP_LABEL}>Gap</span>
+                                <div className="flex items-center shrink-0" style={{ width: 140 }}>
+                                  <XformInput value={gapLen} min={0} onChange={(v, rec) => {
+                                    const str = `${Math.round(dashLen)} ${Math.max(0, Math.round(v))}`;
+                                    (selectedIds.length > 0 ? selectedIds : (previewNode ? [previewNode.id] : [])).forEach(t => setNodeProperty(t, 'style.strokeDash', str, { recordHistory: rec }));
+                                  }} />
+                                </div>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Roundness (rect / path) */}
+                    {showRoundness && (
+                      <div className="flex flex-col" style={{ gap: 10 }}>
+                        <div className="flex items-center justify-between cursor-pointer" onClick={() => setRoundnessOpen(v => !v)}>
+                          <span style={AP_LABEL}>Roundness</span>
+                          {collapseBtn(roundnessOpen, () => setRoundnessOpen(v => !v))}
+                        </div>
+                        {roundnessOpen && (
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center min-w-0">
+                              <KeyframeDiamond nodeId={selectedNode!.id} paths={['props.roundness']} />
+                              <span className="truncate" style={AP_LABEL}>Radius</span>
+                            </div>
+                            <div className="flex items-center shrink-0" style={{ width: 140 }}>
+                              {renderXform('props.roundness', { min: 0, defaultValue: 0 })}
+                            </div>
+                          </div>
                         )}
                       </div>
-                    );
-                  })()}
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })()}
 
-                  {selectedNode.matteSourceId && (
-                    <div className="flex items-center gap-2 mt-2 text-[10px] text-purple-400/70">
-                      <span className="w-2 h-2 rounded-full bg-purple-500/50" />
-                      <span>Masked by: {nodes.get(selectedNode.matteSourceId)?.name || 'Unknown'}</span>
-                    </div>
-                  )}
+          {/* Layer Section — Matte / Blend Mode / Set Parent (collapsed by default) */}
+          {selectedNode && (() => {
+            if (!selectedNode) return null;
+            const LBL: React.CSSProperties = { fontFamily: 'Inter, sans-serif', fontWeight: 450, fontSize: 12, lineHeight: '16px', letterSpacing: '0.005em', color: '#FFFFFF' };
+            const node = selectedNode;
+
+            // Matte source is implicitly the layer directly above (children[i+1] — higher index
+            // is on top, per the exporter's "index 0 = bottom-most" convention).
+            const parentNode = nodes.get(node.parentId || '');
+            const siblings = parentNode?.children || [];
+            const selfIdx = siblings.indexOf(node.id);
+            const aboveId = selfIdx >= 0 ? siblings[selfIdx + 1] : undefined;
+            const matteValue = node.matteSourceId ? String(node.matteType || 1) : '0';
+            const setMatteType = (typeStr: string) => {
+              const t = parseInt(typeStr, 10);
+              if (t === 0) { setMatte(node.id, null); updateNode(node.id, { matteType: 0 }); }
+              else if (aboveId) { setMatte(node.id, aboveId); updateNode(node.id, { matteType: t }); }
+            };
+
+            const blendModes = ['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'];
+            const cap = (s: string) => s.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+            const blendValue = (getCommonValue('style.blendMode') as string) || 'normal';
+
+            // Set Parent: any sibling layer (same parent), excluding self.
+            const parentCandidates = siblings.map(id => nodes.get(id)).filter(n => n && n.id !== node.id && n.type !== 'artboard') as SceneNode[];
+            const parentOptions = [{ value: '', label: 'None' }, ...parentCandidates.map(n => ({ value: n.id, label: n.name }))];
+
+            return (
+              <div className="flex flex-col" style={{ padding: 10, gap: 10, borderBottom: '1px solid #444444' }}>
+                <div className="flex items-center justify-between cursor-pointer" onClick={() => setLayerOpen(v => !v)}>
+                  <span style={LBL}>Layer</span>
+                  <CollapseToggle open={layerOpen} onClick={() => setLayerOpen(v => !v)} />
                 </div>
-              )}
-            </div>
-          )}
+                {layerOpen && (
+                  <>
+                    <PropDropdown label="Matte" value={matteValue}
+                      options={[{ value: '0', label: 'No Matte' }, { value: '1', label: 'Alpha' }, { value: '2', label: 'Alpha Inverted' }, { value: '3', label: 'Luma' }, { value: '4', label: 'Luma Inverted' }]}
+                      onChange={setMatteType} />
+                    <PropDropdown label="Blend Mode" value={blendValue}
+                      options={blendModes.map(m => ({ value: m, label: cap(m) }))}
+                      onChange={(v) => handleChange('style.blendMode', v)} />
+                    <PropDropdown label="Set Parent" value={node.parentLayerId || ''}
+                      options={parentOptions}
+                      onChange={(v) => updateNode(node.id, { parentLayerId: v || null })} />
+                  </>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* Trim Path Section (collapsed by default) */}
+          {isRectOrEllipseOrPath && (!selectedNode || selectedNode.type !== 'image') && !isOnlyPrimitivesSelected && (() => {
+            const LBL: React.CSSProperties = { fontFamily: 'Inter, sans-serif', fontWeight: 450, fontSize: 12, lineHeight: '16px', letterSpacing: '0.005em', color: '#FFFFFF' };
+            return (
+              <div className="flex flex-col" style={{ padding: 10, gap: 10, borderBottom: '1px solid #444444' }}>
+                <div className="flex items-center justify-between cursor-pointer" onClick={() => setTrimPathExpanded(v => !v)}>
+                  <span style={LBL}>Trim Path</span>
+                  <CollapseToggle open={trimPathExpanded} onClick={() => setTrimPathExpanded(v => !v)} />
+                </div>
+                {trimPathExpanded && (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center min-w-0"><KeyframeDiamond nodeId={selectedNode!.id} paths={['style.trimStart']} /><span className="truncate" style={LBL}>Start</span></div>
+                      <div className="flex items-center shrink-0" style={{ width: 140 }}>{renderXform('style.trimStart', { suffix: '%', displayFactor: 100, min: 0, max: 1, defaultValue: 0 })}</div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center min-w-0"><KeyframeDiamond nodeId={selectedNode!.id} paths={['style.trimEnd']} /><span className="truncate" style={LBL}>End</span></div>
+                      <div className="flex items-center shrink-0" style={{ width: 140 }}>{renderXform('style.trimEnd', { suffix: '%', displayFactor: 100, min: 0, max: 1, defaultValue: 1 })}</div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center min-w-0"><KeyframeDiamond nodeId={selectedNode!.id} paths={['style.trimOffset']} /><span className="truncate" style={LBL}>Offset</span></div>
+                      <div className="flex items-center shrink-0" style={{ width: 140 }}>{renderXform('style.trimOffset', { suffix: '°', defaultValue: 0 })}</div>
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* Effects Section — '+' adds a Drop Shadow; switch type or edit via the settings popover */}
+          {selectedNode && (() => {
+            if (!selectedNode) return null;
+            const LBL: React.CSSProperties = { fontFamily: 'Inter, sans-serif', fontWeight: 450, fontSize: 12, lineHeight: '16px', letterSpacing: '0.005em', color: '#FFFFFF' };
+            const effects = selectedNode.style.effects || [];
+            return (
+              <div className="flex flex-col" style={{ padding: 10, gap: 10, borderBottom: '1px solid #444444' }}>
+                <div className="flex items-center justify-between">
+                  <span style={LBL}>Effects</span>
+                  <button onClick={() => handleAddEffect('shadow')} title="Add Effect" className="flex items-center justify-center shrink-0" style={{ width: 24, height: 24 }}>
+                    <PhPlus size={14} color="rgba(255,255,255,0.5)" />
+                  </button>
+                </div>
+                {effects.map(effect => (
+                  <div key={effect.id} className="flex items-center" style={{ gap: 6 }}>
+                    <div className="flex-1 min-w-0">
+                      <BareDropdown value={effect.type}
+                        options={[{ value: 'shadow', label: 'Drop Shadow' }, { value: 'blur', label: 'Blur' }]}
+                        onChange={(v) => handleEffectChange(effect.id, { type: v, name: v === 'shadow' ? 'Drop Shadow' : 'Blur' })} />
+                    </div>
+                    <EffectPopover effect={effect} onChange={(u) => handleEffectChange(effect.id, u)}
+                      trigger={<button className="flex items-center justify-center shrink-0 text-white/50 hover:text-white transition-colors" style={{ width: 24, height: 24 }} title="Effect Settings"><PhFaders size={16} /></button>} />
+                    <button onClick={() => handleRemoveEffect(effect.id)} className="flex items-center justify-center shrink-0 text-white/50 hover:text-white transition-colors" style={{ width: 24, height: 24 }} title="Remove Effect">
+                      <PhMinus size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
         </>
       )}
 
@@ -1706,27 +1623,71 @@ export default function InspectorPanel() {
         const isTransparent = !!targetNode.props.transparent;
         const displayHex = isTransparent ? 'Transparent' : bgColor.replace('#', '').toUpperCase();
 
-        const AB_FONT: React.CSSProperties = { fontFamily: 'Inter, sans-serif', fontWeight: 450, fontSize: 12, color: '#FFFFFF', letterSpacing: '0.04em' };
+        // Figma layout/structure, scaled to match the app's other panels (Layers/Timeline/
+        // Transform): 32px fields (h-8), 12px text, 16–18px icons.
+        const AB_FONT: React.CSSProperties = { fontFamily: 'Inter, sans-serif', fontWeight: 450, fontSize: 12, lineHeight: '16px', color: '#FFFFFF', letterSpacing: '0.005em' };
         const AB_LABEL: React.CSSProperties = { fontFamily: 'Inter, sans-serif', fontWeight: 500, fontSize: 12, color: 'rgba(255,255,255,0.7)' };
-        const AB_FIELD: React.CSSProperties = { height: 34, background: '#383838', borderRadius: 6 };
-        const AB_DROPDOWN: React.CSSProperties = { height: 34, background: '#2C2C2C', border: '1px solid #444444', borderRadius: 6, paddingLeft: 10 };
-        const AB_ROW: React.CSSProperties = { padding: '5px 10px' };
+        const AB_FIELD: React.CSSProperties = { height: 32, background: '#383838', borderRadius: 6 };
+        const AB_DROPDOWN: React.CSSProperties = { height: 32, background: '#2C2C2C', border: '1px solid #444444', borderRadius: 6, paddingLeft: 10 };
+        const ICON_MUTED = 'rgba(255,255,255,0.7)';
+        const ICON_SLOT: React.CSSProperties = { width: 32, height: 32 };
+        const scaleLink = !!targetNode.transform?.scaleLink;
 
         return (
           <div className="flex flex-col flex-1" style={{ background: '#2C2C2C' }}>
 
+            {/* Heading */}
+            <div className="flex items-center" style={{ padding: '10px', borderBottom: '1px solid #444444' }}>
+              <span style={{ fontFamily: 'Inter, sans-serif', fontWeight: 600, fontSize: 12, lineHeight: '16px', letterSpacing: '0.005em', color: '#FFFFFF' }}>Artboard</span>
+            </div>
+
             {/* Content rows */}
-            <div style={{ padding: '8px 0' }}>
+            <div className="flex flex-col" style={{ padding: '10px 0', gap: 10 }}>
+
+              {/* Row: Preset dropdown (Custom Size) */}
+              <div style={{ padding: '0 10px' }}>
+                <div className="relative">
+                  <button
+                    onClick={() => setShowPresets(v => !v)}
+                    className="flex items-center w-full"
+                    style={AB_DROPDOWN}
+                  >
+                    <span className="flex-1 text-left truncate" style={AB_FONT}>{presetLabel}</span>
+                    <div className="flex items-center justify-center shrink-0" style={ICON_SLOT}>
+                      <PhCaretDown size={14} weight="regular" color={ICON_MUTED} />
+                    </div>
+                  </button>
+                  {showPresets && (
+                    <>
+                      <div className="fixed inset-0 z-[99]" onClick={() => setShowPresets(false)} />
+                      <div className="absolute top-full left-0 right-0 mt-1 z-[100] rounded overflow-hidden"
+                        style={{ background: '#27292C', border: '1px solid #444444', boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}
+                      >
+                        {PRESETS.map(p => (
+                          <button
+                            key={p.label}
+                            className="w-full text-left px-3 py-2 hover:bg-white/5 transition-colors"
+                            style={{ ...AB_FONT, color: (w === p.w && h === p.h) ? 'var(--accent)' : '#FFFFFF' }}
+                            onClick={() => { setNodeProperties(targetId, { 'props.width': p.w, 'props.height': p.h }); setShowPresets(false); }}
+                          >
+                            {p.label}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
 
               {/* Row: Background color */}
-              <div style={AB_ROW}>
-                <div className="flex items-center justify-between" style={AB_FIELD}>
-                  {/* Swatch + hex */}
-                  <div className="flex items-center flex-1 min-w-0">
-                    <div className="flex items-center justify-center shrink-0" style={{ width: 34, height: 34 }}>
+              <div style={{ padding: '0 10px' }}>
+                <div className="flex items-center" style={{ gap: 6 }}>
+                  {/* Swatch + hex field */}
+                  <div className="flex items-center flex-1 min-w-0" style={AB_FIELD}>
+                    <div className="flex items-center justify-center shrink-0" style={ICON_SLOT}>
                       <div className="relative overflow-hidden" style={{
-                        width: 18, height: 18, borderRadius: 3,
-                        border: '1px solid rgba(255,255,255,0.15)',
+                        width: 16, height: 16, borderRadius: 3,
+                        border: '1px solid rgba(255,255,255,0.1)',
                         background: isTransparent
                           ? 'repeating-conic-gradient(#666 0% 25%, #999 0% 50%) 0 0 / 6px 6px'
                           : bgColor,
@@ -1771,136 +1732,100 @@ export default function InspectorPanel() {
                       style={AB_FONT}
                     />
                   </div>
-                  {/* Visibility toggle */}
+                  {/* Visibility toggle (eye — Phosphor fill) */}
                   <button
                     onClick={() => setNodeProperty(targetId, 'props.transparent', !isTransparent)}
                     className="flex items-center justify-center shrink-0 transition-colors"
-                    style={{ padding: '0 8px', height: '100%', borderLeft: '2px solid #2C2C2C', color: isTransparent ? '#FFFFFF' : 'rgba(255,255,255,0.5)' }}
+                    style={{ ...ICON_SLOT, borderRadius: 5 }}
                     title={isTransparent ? 'Show background' : 'Transparent background'}
                   >
                     {isTransparent
-                      ? <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="m10.79 12.912-1.614-1.615a3.5 3.5 0 0 1-4.474-4.474l-2.06-2.06C.938 6.278 0 8 0 8s3 5.5 8 5.5a7 7 0 0 0 2.79-.588M5.21 3.088A7 7 0 0 1 8 2.5c5 0 8 5.5 8 5.5s-.939 1.721-2.641 3.238l-2.062-2.062a3.5 3.5 0 0 0-4.474-4.474z"/><path d="M5.525 7.646a2.5 2.5 0 0 0 2.829 2.829zm4.95.708-2.829-2.83a2.5 2.5 0 0 1 2.829 2.829zm3.171 6-12-12 .708-.708 12 12z"/></svg>
-                      : <svg width="18" height="18" viewBox="6 6 18 12" fill="currentColor"><path d="M21.5248 11.8228C21.5056 11.7796 21.0424 10.752 20.0127 9.72227C18.6405 8.35016 16.9075 7.625 15 7.625C13.0925 7.625 11.3594 8.35016 9.98734 9.72227C8.95757 10.752 8.49218 11.7812 8.47523 11.8228C8.45035 11.8788 8.4375 11.9393 8.4375 12.0005C8.4375 12.0618 8.45035 12.1223 8.47523 12.1783C8.49437 12.2215 8.95757 13.2485 9.98734 14.2783C11.3594 15.6498 13.0925 16.375 15 16.375C16.9075 16.375 18.6405 15.6498 20.0127 14.2783C21.0424 13.2485 21.5056 12.2215 21.5248 12.1783C21.5496 12.1223 21.5625 12.0618 21.5625 12.0005C21.5625 11.9393 21.5496 11.8788 21.5248 11.8228ZM15 14.1875C14.5673 14.1875 14.1444 14.0592 13.7847 13.8188C13.425 13.5785 13.1446 13.2368 12.979 12.8371C12.8134 12.4374 12.7701 11.9976 12.8545 11.5732C12.9389 11.1489 13.1473 10.7591 13.4532 10.4532C13.7591 10.1473 14.1489 9.93894 14.5732 9.85453C14.9976 9.77013 15.4374 9.81345 15.8371 9.97901C16.2368 10.1446 16.5785 10.425 16.8188 10.7847C17.0592 11.1444 17.1875 11.5674 17.1875 12C17.1875 12.5802 16.957 13.1366 16.5468 13.5468C16.1366 13.957 15.5802 14.1875 15 14.1875Z"/></svg>
-                    }
+                      ? <PhEyeSlash size={18} weight="fill" color="rgba(255,255,255,0.4)" />
+                      : <PhEye size={18} weight="fill" color={ICON_MUTED} />}
                   </button>
-                </div>
-              </div>
-
-              {/* Row: Preset dropdown */}
-              <div style={AB_ROW}>
-                <div className="relative">
-                  <button
-                    onClick={() => setShowPresets(v => !v)}
-                    className="flex items-center w-full"
-                    style={AB_DROPDOWN}
-                  >
-                    <span className="flex-1 text-left truncate" style={AB_FONT}>{presetLabel}</span>
-                    <div className="flex items-center justify-center shrink-0" style={{ width: 34, height: 34 }}>
-                      <svg width="14" height="14" viewBox="6 8 12 8" fill="none"><path d="M13.6464 11.1464C13.8417 10.9512 14.1582 10.9512 14.3535 11.1464C14.5487 11.3417 14.5487 11.6582 14.3535 11.8535L12.3535 13.8535C12.1582 14.0487 11.8417 14.0487 11.6464 13.8535L9.64645 11.8535C9.45118 11.6582 9.45118 11.3417 9.64645 11.1464C9.84171 10.9512 10.1582 10.9512 10.3535 11.1464L12 12.7929L13.6464 11.1464Z" fill="white"/></svg>
-                    </div>
-                  </button>
-                  {showPresets && (
-                    <>
-                      <div className="fixed inset-0 z-[99]" onClick={() => setShowPresets(false)} />
-                      <div className="absolute top-full left-0 right-0 mt-1 z-[100] rounded overflow-hidden"
-                        style={{ background: '#27292C', border: '1px solid #444444', boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}
-                      >
-                        {PRESETS.map(p => (
-                          <button
-                            key={p.label}
-                            className="w-full text-left px-3 py-2 hover:bg-white/5 transition-colors"
-                            style={{ ...AB_FONT, color: (w === p.w && h === p.h) ? 'var(--accent)' : '#FFFFFF' }}
-                            onClick={() => { setNodeProperties(targetId, { 'props.width': p.w, 'props.height': p.h }); setShowPresets(false); }}
-                          >
-                            {p.label}
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  )}
                 </div>
               </div>
 
               {/* Row: W/H dimensions */}
-              <div style={AB_ROW}>
-                <div className="flex items-center" style={{ ...AB_FIELD, overflow: 'hidden' }}>
+              <div style={{ padding: '0 10px' }}>
+                <div className="flex items-center" style={{ gap: 6 }}>
                   {/* W */}
-                  <div className="flex items-center flex-1">
-                    <div className="flex items-center justify-center shrink-0" style={{ width: 34, height: 34 }}>
+                  <div className="flex items-center flex-1 min-w-0" style={{ ...AB_FIELD, overflow: 'hidden' }}>
+                    <div className="flex items-center justify-center shrink-0" style={ICON_SLOT}>
                       <span style={AB_LABEL}>W</span>
                     </div>
                     <ArtboardInlineInput value={w} min={1}
                       onChange={v => setNodeProperty(targetId, 'props.width', v, { recordHistory: true })} />
                   </div>
-                  <div style={{ width: 2, alignSelf: 'stretch', background: '#2C2C2C' }} />
                   {/* H */}
-                  <div className="flex items-center flex-1">
-                    <div className="flex items-center justify-center shrink-0" style={{ width: 34, height: 34 }}>
+                  <div className="flex items-center flex-1 min-w-0" style={{ ...AB_FIELD, overflow: 'hidden' }}>
+                    <div className="flex items-center justify-center shrink-0" style={ICON_SLOT}>
                       <span style={AB_LABEL}>H</span>
                     </div>
                     <ArtboardInlineInput value={h} min={1}
                       onChange={v => setNodeProperty(targetId, 'props.height', v, { recordHistory: true })} />
                   </div>
-                  {/* Link */}
+                  {/* Link (proportional lock) — blue background when on */}
                   <button
-                    onClick={() => setNodeProperty(targetId, 'transform.scaleLink', !targetNode.transform?.scaleLink)}
+                    onClick={() => setNodeProperty(targetId, 'transform.scaleLink', !scaleLink)}
                     className="flex items-center justify-center shrink-0 transition-colors"
-                    style={{ height: '100%', padding: '0 8px', borderLeft: '2px solid #2C2C2C', color: targetNode.transform?.scaleLink ? '#FFFFFF' : 'rgba(255,255,255,0.4)' }}
+                    style={{ ...ICON_SLOT, borderRadius: 5, background: scaleLink ? '#0A6DC2' : 'transparent' }}
+                    title={scaleLink ? 'Proportional scaling on' : 'Proportional scaling off'}
                   >
-                    <svg width="18" height="18" viewBox="6 6 18 12" fill="currentColor"><path d="M9.53125 12C9.53125 12.5221 9.73867 13.0229 10.1079 13.3921C10.4771 13.7613 10.9779 13.9688 11.5 13.9688H13.6875C13.8615 13.9688 14.0285 14.0379 14.1515 14.161C14.2746 14.284 14.3438 14.451 14.3438 14.625C14.3438 14.799 14.2746 14.966 14.1515 15.089C14.0285 15.2121 13.8615 15.2812 13.6875 15.2812H11.5C10.6298 15.2812 9.79516 14.9355 9.17981 14.3202C8.56445 13.7048 8.21875 12.8702 8.21875 12C8.21875 11.1298 8.56445 10.2952 9.17981 9.67981C9.79516 9.06445 10.6298 8.71875 11.5 8.71875H13.6875C13.8615 8.71875 14.0285 8.78789 14.1515 8.91096C14.2746 9.03403 14.3438 9.20095 14.3438 9.375C14.3438 9.54905 14.2746 9.71597 14.1515 9.83904C14.0285 9.96211 13.8615 10.0312 13.6875 10.0312H11.5C10.9779 10.0312 10.4771 10.2387 10.1079 10.6079C9.73867 10.9771 9.53125 11.4779 9.53125 12ZM18.5 8.71875H16.3125C16.1385 8.71875 15.9715 8.78789 15.8485 8.91096C15.7254 9.03403 15.6562 9.20095 15.6562 9.375C15.6562 9.54905 15.7254 9.71597 15.8485 9.83904C15.9715 9.96211 16.1385 10.0312 16.3125 10.0312H18.5C19.0221 10.0312 19.5229 10.2387 19.8921 10.6079C20.2613 10.9771 20.4688 11.4779 20.4688 12C20.4688 12.5221 20.2613 13.0229 19.8921 13.3921C19.5229 13.7613 19.0221 13.9688 18.5 13.9688H16.3125C16.1385 13.9688 15.9715 14.0379 15.8485 14.161C15.7254 14.284 15.6562 14.451 15.6562 14.625C15.6562 14.799 15.7254 14.966 15.8485 15.089C15.9715 15.2121 16.1385 15.2812 16.3125 15.2812H18.5C19.3702 15.2812 20.2048 14.9355 20.8202 14.3202C21.4355 13.7048 21.7812 12.8702 21.7812 12C21.7812 11.1298 21.4355 10.2952 20.8202 9.67981C20.2048 9.06445 19.3702 8.71875 18.5 8.71875Z"/></svg>
+                    <PhLinkSimple size={16} weight="regular" color={scaleLink ? '#FFFFFF' : 'rgba(255,255,255,0.4)'} />
                   </button>
                 </div>
               </div>
 
               {/* Row: Duration + FPS */}
-              <div className="flex" style={{ ...AB_ROW, gap: 8 }}>
-                {/* Duration */}
-                <div className="flex items-center flex-1" style={AB_FIELD}>
-                  <div className="flex items-center justify-center shrink-0" style={{ width: 34, height: 34 }}>
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="rgba(255,255,255,0.8)">
-                      <path d="M12 6C15.3137 6 18 8.68629 18 12C18 15.3137 15.3137 18 12 18C8.68629 18 6 15.3137 6 12C6 8.68629 8.68629 6 12 6ZM12 7C9.23858 7 7 9.23858 7 12C7 14.7614 9.23858 17 12 17C14.7614 17 17 14.7614 17 12C17 9.23858 14.7614 7 12 7ZM12 8.5C12.2761 8.5 12.5 8.72386 12.5 9V11.793L14.0674 13.3604C14.2626 13.5556 14.2626 13.8721 14.0674 14.0674C13.8721 14.2626 13.5556 14.2626 13.3604 14.0674L11.6465 12.3535C11.5527 12.2597 11.5 12.1326 11.5 12V9C11.5 8.72386 11.7239 8.5 12 8.5Z"/>
-                    </svg>
-                  </div>
-                  <ArtboardDurationInput
-                    value={duration} fps={fps}
-                    onChange={frames => setNodeProperty(targetId, 'props.duration', frames, { recordHistory: true })}
-                  />
-                </div>
-                {/* FPS dropdown */}
-                <div className="relative flex-1">
-                  <button
-                    onClick={() => setShowFpsMenu(v => !v)}
-                    className="flex items-center w-full"
-                    style={AB_DROPDOWN}
-                  >
-                    <span className="flex-1 text-left" style={AB_FONT}>{fps} FPS</span>
-                    <div className="flex items-center justify-center shrink-0" style={{ width: 34, height: 34 }}>
-                      <svg width="14" height="14" viewBox="6 8 12 8" fill="none"><path d="M13.6464 11.1464C13.8417 10.9512 14.1582 10.9512 14.3535 11.1464C14.5487 11.3417 14.5487 11.6582 14.3535 11.8535L12.3535 13.8535C12.1582 14.0487 11.8417 14.0487 11.6464 13.8535L9.64645 11.8535C9.45118 11.6582 9.45118 11.3417 9.64645 11.1464C9.84171 10.9512 10.1582 10.9512 10.3535 11.1464L12 12.7929L13.6464 11.1464Z" fill="white"/></svg>
+              <div style={{ padding: '0 10px' }}>
+                <div className="flex items-center" style={{ gap: 6 }}>
+                  {/* Duration */}
+                  <div className="flex items-center flex-1 min-w-0" style={AB_FIELD}>
+                    <div className="flex items-center justify-center shrink-0" style={ICON_SLOT}>
+                      <PhClock size={18} weight="regular" color={ICON_MUTED} />
                     </div>
-                  </button>
-                  {showFpsMenu && (
-                    <>
-                      <div className="fixed inset-0 z-[99]" onClick={() => setShowFpsMenu(false)} />
-                      <div className="absolute bottom-full left-0 right-0 mb-1 z-[100] rounded overflow-hidden"
-                        style={{ background: '#27292C', border: '1px solid #444444', boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}
-                      >
-                        {[12, 24, 25, 30, 60, 120].map(f => (
-                          <button
-                            key={f}
-                            className="w-full text-left px-3 py-2 hover:bg-white/5 transition-colors"
-                            style={{ ...AB_FONT, color: fps === f ? 'var(--accent)' : '#FFFFFF' }}
-                            onClick={() => {
-                              const newDuration = Math.round((duration / fps) * f);
-                              setNodeProperties(targetId, { 'props.frameRate': f, 'props.duration': newDuration });
-                              setShowFpsMenu(false);
-                            }}
-                          >
-                            {f} FPS
-                          </button>
-                        ))}
+                    <ArtboardDurationInput
+                      value={duration} fps={fps}
+                      onChange={frames => setNodeProperty(targetId, 'props.duration', frames, { recordHistory: true })}
+                    />
+                  </div>
+                  {/* FPS dropdown */}
+                  <div className="relative flex-1">
+                    <button
+                      onClick={() => setShowFpsMenu(v => !v)}
+                      className="flex items-center w-full"
+                      style={AB_DROPDOWN}
+                    >
+                      <span className="flex-1 text-left" style={AB_FONT}>{fps} FPS</span>
+                      <div className="flex items-center justify-center shrink-0" style={ICON_SLOT}>
+                        <PhCaretDown size={14} weight="regular" color={ICON_MUTED} />
                       </div>
-                    </>
-                  )}
+                    </button>
+                    {showFpsMenu && (
+                      <>
+                        <div className="fixed inset-0 z-[99]" onClick={() => setShowFpsMenu(false)} />
+                        <div className="absolute bottom-full left-0 right-0 mb-1 z-[100] rounded overflow-hidden"
+                          style={{ background: '#27292C', border: '1px solid #444444', boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}
+                        >
+                          {[12, 24, 25, 30, 60, 120].map(f => (
+                            <button
+                              key={f}
+                              className="w-full text-left px-3 py-2 hover:bg-white/5 transition-colors"
+                              style={{ ...AB_FONT, color: fps === f ? 'var(--accent)' : '#FFFFFF' }}
+                              onClick={() => {
+                                const newDuration = Math.round((duration / fps) * f);
+                                setNodeProperties(targetId, { 'props.frameRate': f, 'props.duration': newDuration });
+                                setShowFpsMenu(false);
+                              }}
+                            >
+                              {f} FPS
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -2026,7 +1951,7 @@ function ArtboardInlineInput({ value, min, max, onChange }: {
   if (editing) {
     return (
       <input ref={ref} type="text"
-        className="flex-1 bg-transparent outline-none text-center"
+        className="flex-1 min-w-0 bg-transparent outline-none text-left"
         style={{ fontFamily: 'Inter, sans-serif', fontWeight: 450, fontSize: 12, color: '#FFFFFF' }}
         value={local}
         onChange={e => setLocal(e.target.value)}
@@ -2037,11 +1962,11 @@ function ArtboardInlineInput({ value, min, max, onChange }: {
   }
 
   return (
-    <div className="flex-1 flex items-center justify-center cursor-ew-resize select-none h-full"
+    <div className="flex-1 min-w-0 flex items-center justify-start cursor-ew-resize select-none h-full"
       onMouseDown={handleMouseDown}
       onClick={() => { setLocal(value.toString()); setEditing(true); }}
     >
-      <span style={{ fontFamily: 'Inter, sans-serif', fontWeight: 450, fontSize: 12, color: '#FFFFFF' }}>
+      <span className="truncate" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 450, fontSize: 12, color: '#FFFFFF' }}>
         {Number.isInteger(value) ? value : Math.round(value)}
       </span>
     </div>
@@ -2176,6 +2101,190 @@ function TimeSegment({ value, onValueChange, max }: { value: number, onValueChan
       onKeyDown={handleKeyDown}
       className={`w-[18px] bg-transparent text-[11px] font-mono font-bold text-center outline-none transition-colors ${isEditing ? 'text-white' : 'text-accent/80 hover:text-white cursor-pointer'}`}
     />
+  );
+}
+
+// Keyframe toggle rendered as a solid diamond (Figma Transform rows). Reuses the same
+// toggleStopwatch logic as StopwatchButton; dim white when un-animated, accent when the
+// property is animated, ringed when a keyframe sits at the current time.
+function KeyframeDiamond({ nodeId, paths }: { nodeId: string; paths: string[] }) {
+  const nodes = useCreatorStore((state) => state.nodes);
+  const currentTime = useCreatorStore((state) => state.currentTime);
+  const node = nodes.get(nodeId);
+  if (!node) return null;
+  const animations = node.animations || {};
+  const hasAnimation = paths.some(p => !!animations[p]);
+  const hasKeyframe = hasAnimation && paths.some(p => animations[p]?.some(k => Math.abs(k.time - currentTime) < 0.1));
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); e.preventDefault(); paths.forEach(p => useCreatorStore.getState().toggleStopwatch(nodeId, p)); }}
+      className="flex items-center justify-center shrink-0 transition-all"
+      style={{ height: 24, paddingRight: 9 }}
+      title="Toggle keyframe animation"
+    >
+      <div
+        className="rotate-45 transition-all"
+        style={{
+          width: 9, height: 9, borderRadius: 1.5,
+          background: hasAnimation ? 'var(--accent)' : 'rgba(255,255,255,0.7)',
+          outline: hasKeyframe ? '1.5px solid rgba(255,255,255,0.9)' : 'none',
+          outlineOffset: 1,
+        }}
+      />
+    </button>
+  );
+}
+
+// Figma-style numeric field: #383838 pill, optional centered prefix slot (X/Y), left-aligned
+// value with optional suffix (°/%), horizontal drag-to-scrub and click-to-edit. Multi-select
+// aware via the onChange callback; rAF-coalesced so downstream updates stay one-per-frame.
+function XformInput({ value, isMixed, prefix, suffix, min, max, step = 1, displayFactor = 1, onChange }: {
+  value: number; isMixed?: boolean; prefix?: string; suffix?: string;
+  min?: number; max?: number; step?: number; displayFactor?: number;
+  onChange: (v: number, recordHistory?: boolean) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [local, setLocal] = useState('');
+  const ref = useRef<HTMLInputElement>(null);
+  const rafId = useRef<number | null>(null);
+  const pending = useRef<number | null>(null);
+
+  const display = isMixed ? 'Mixed' : String(Math.round(value * displayFactor * 100) / 100);
+
+  useEffect(() => { if (editing) { ref.current?.focus(); ref.current?.select(); } }, [editing]);
+  useEffect(() => () => { if (rafId.current !== null) cancelAnimationFrame(rafId.current); }, []);
+
+  const commit = () => {
+    setEditing(false);
+    const n = parseFloat(local);
+    if (!isNaN(n)) onChange(Math.max(min ?? -Infinity, Math.min(max ?? Infinity, n / displayFactor)), true);
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (editing || e.button !== 0 || isMixed) return;
+    const startX = e.clientX;
+    const startVal = value;
+    let moved = false, recorded = false;
+    const onMove = (me: MouseEvent) => {
+      const dx = me.clientX - startX;
+      if (Math.abs(dx) > 3) moved = true;
+      if (!moved) return;
+      if (!recorded) {
+        recorded = true;
+        useCreatorStore.getState().pushToHistory('Change Property');
+      }
+      let sens = step / displayFactor;
+      if (me.shiftKey) sens *= 10;
+      if (me.altKey) sens /= 10;
+      pending.current = Math.max(min ?? -Infinity, Math.min(max ?? Infinity, startVal + dx * sens));
+      if (rafId.current === null) {
+        rafId.current = requestAnimationFrame(() => {
+          rafId.current = null;
+          if (pending.current !== null) { onChange(pending.current, false); pending.current = null; }
+        });
+      }
+    };
+    const onUp = () => {
+      if (rafId.current !== null) { cancelAnimationFrame(rafId.current); rafId.current = null; }
+      if (pending.current !== null) { onChange(pending.current, false); pending.current = null; }
+      if (!moved) { setLocal(display); setEditing(true); }
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = 'default';
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'ew-resize';
+  };
+
+  const valStyle: React.CSSProperties = { fontFamily: 'Inter, sans-serif', fontWeight: 450, fontSize: 12, color: isMixed ? 'rgba(255,170,90,0.85)' : '#FFFFFF', paddingLeft: prefix ? 0 : 8, paddingRight: 8 };
+
+  return (
+    <div
+      className="flex items-center flex-1 min-w-0 cursor-ew-resize select-none"
+      style={{ height: 32, background: '#383838', borderRadius: 6 }}
+      onMouseDown={handleMouseDown}
+    >
+      {prefix && (
+        <div className="flex items-center justify-center shrink-0" style={{ width: 24, height: 32 }}>
+          <span style={{ fontFamily: 'Inter, sans-serif', fontWeight: 500, fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>{prefix}</span>
+        </div>
+      )}
+      {editing ? (
+        <input
+          ref={ref}
+          type="text"
+          className="flex-1 min-w-0 bg-transparent outline-none text-left"
+          style={valStyle}
+          value={local}
+          onChange={e => setLocal(e.target.value)}
+          onBlur={commit}
+          onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
+        />
+      ) : (
+        <span className="flex-1 min-w-0 truncate text-left" style={valStyle}>{display}{isMixed ? '' : (suffix || '')}</span>
+      )}
+    </div>
+  );
+}
+
+// Figma-style dropdown row: label on the left, a 140px #383838 dropdown on the right.
+// Self-contained open state; used for Line Cap / Line Join / Stroke Style.
+// +/− section collapse toggle (Appearance / Layer / Trim Path headers).
+function CollapseToggle({ open, onClick }: { open: boolean; onClick: () => void }) {
+  return (
+    <button onClick={(e) => { e.stopPropagation(); onClick(); }} className="flex items-center justify-center shrink-0" style={{ width: 24, height: 24 }}>
+      {open ? <PhMinus size={14} color="rgba(255,255,255,0.5)" /> : <PhPlus size={14} color="rgba(255,255,255,0.5)" />}
+    </button>
+  );
+}
+
+// The dropdown control itself (button + menu), no label. Fills its container by default.
+function BareDropdown({ value, options, onChange, openUp = false }: {
+  value: string; options: { value: string; label: string }[]; onChange: (v: string) => void; openUp?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const LBL: React.CSSProperties = { fontFamily: 'Inter, sans-serif', fontWeight: 450, fontSize: 12, lineHeight: '16px', letterSpacing: '0.005em', color: '#FFFFFF' };
+  const current = options.find(o => o.value === value) || options[0];
+  return (
+    <div className="relative w-full">
+      <button onClick={() => setOpen(v => !v)} className="w-full flex items-center justify-between" style={{ height: 32, background: '#383838', borderRadius: 6, paddingLeft: 8 }}>
+        <span className="truncate" style={LBL}>{current?.label}</span>
+        <div className="flex items-center justify-center shrink-0" style={{ width: 24, height: 32 }}>
+          <PhCaretDown size={14} weight="regular" color="rgba(255,255,255,0.7)" />
+        </div>
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-[99]" onClick={() => setOpen(false)} />
+          <div className={`absolute left-0 right-0 z-[100] rounded overflow-y-auto ${openUp ? 'bottom-full mb-1' : 'top-full mt-1'}`} style={{ background: '#27292C', border: '1px solid #444444', boxShadow: '0 8px 24px rgba(0,0,0,0.4)', maxHeight: 240 }}>
+            {options.map(o => (
+              <button key={o.value} className="w-full text-left px-3 py-2 hover:bg-white/5 transition-colors"
+                style={{ ...LBL, color: o.value === value ? 'var(--accent)' : '#FFFFFF' }}
+                onClick={() => { onChange(o.value); setOpen(false); }}>
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Label-left + 140px dropdown-right row (Line Cap, Line Join, Style, Matte, Blend Mode, Set Parent).
+function PropDropdown({ label, value, options, onChange, width = 140 }: {
+  label: string; value: string; options: { value: string; label: string }[];
+  onChange: (v: string) => void; width?: number;
+}) {
+  const LBL: React.CSSProperties = { fontFamily: 'Inter, sans-serif', fontWeight: 450, fontSize: 12, lineHeight: '16px', letterSpacing: '0.005em', color: '#FFFFFF' };
+  return (
+    <div className="flex items-center justify-between">
+      <span className="truncate" style={LBL}>{label}</span>
+      <div className="shrink-0" style={{ width }}>
+        <BareDropdown value={value} options={options} onChange={onChange} />
+      </div>
+    </div>
   );
 }
 

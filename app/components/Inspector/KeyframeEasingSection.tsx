@@ -1,270 +1,180 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useMemo, useState, useRef, useEffect } from 'react';
 import { useCreatorStore } from '@/lib/creator/state/store';
-import { EASING_PRESETS, matchPreset, formatBezier, parseBezier } from '@/lib/creator/core/EasingPresets';
-import { ChevronDown, Activity, Minus, ArrowRight, ArrowLeft, Zap, Feather } from 'lucide-react';
+import { EASING_PRESETS, matchPreset } from '@/lib/creator/core/EasingPresets';
+import { CaretDown as PhCaretDown, LinkSimple as PhLinkSimple } from '@phosphor-icons/react';
 import BezierCanvas from '../Timeline/BezierCanvas';
 
-const PRESET_ICONS: Record<string, React.ReactNode> = {
-    'linear': <Minus size={12} />,
-    'easy-ease': <Activity size={12} />,
-    'ease-in': <ArrowRight size={12} />,
-    'ease-out': <ArrowLeft size={12} />,
-    'ease-in-out': <Activity size={12} />,
-    'smooth': <Feather size={12} />,
-    'natural': <Feather size={12} />,
-    'slowdown': <ArrowLeft size={12} />,
-    'accelerate': <ArrowRight size={12} />,
-    'overshoot': <Zap size={12} />,
-    'bounce': <Activity size={12} />,
-};
+type Bezier = [number, number, number, number];
 
-// Quick preset buttons shown in the main panel
-const QUICK_PRESETS = ['linear', 'easy-ease', 'ease-in', 'ease-out'];
+const LBL: React.CSSProperties = { fontFamily: 'Inter, sans-serif', fontWeight: 450, fontSize: 12, lineHeight: '16px', letterSpacing: '0.005em', color: '#FFFFFF' };
+
+// Small ease-curve glyph used in the preset dropdown (placeholder for the Figma icon).
+function CurveIcon({ size = 14, color = 'rgba(255,255,255,0.7)' }: { size?: number; color?: string }) {
+    return (
+        <svg width={size} height={size} viewBox="0 0 16 16" fill="none">
+            <path d="M2 13C6.5 13 9.5 3 14 3" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+    );
+}
+
+// Influence value box (0–100), drag-to-scrub + click-to-edit, #383838 patch.
+function EaseInput({ value, onChange }: { value: number; onChange: (v: number, record?: boolean) => void }) {
+    const [editing, setEditing] = useState(false);
+    const [local, setLocal] = useState('');
+    const ref = useRef<HTMLInputElement>(null);
+    useEffect(() => { if (editing) { ref.current?.focus(); ref.current?.select(); } }, [editing]);
+
+    const commit = () => {
+        setEditing(false);
+        const n = parseFloat(local);
+        if (!isNaN(n)) onChange(Math.max(0, Math.min(100, Math.round(n))), true);
+    };
+    const onDown = (e: React.MouseEvent) => {
+        if (editing || e.button !== 0) return;
+        const startX = e.clientX; const startVal = value; let moved = false;
+        const move = (me: MouseEvent) => {
+            const dx = me.clientX - startX;
+            if (Math.abs(dx) > 3) moved = true;
+            if (moved) onChange(Math.max(0, Math.min(100, Math.round(startVal + dx))), false);
+        };
+        const up = () => {
+            if (!moved) { setLocal(String(value)); setEditing(true); }
+            window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
+            document.body.style.cursor = 'default';
+        };
+        window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+        document.body.style.cursor = 'ew-resize';
+    };
+    return (
+        <div className="flex items-center justify-center flex-1 min-w-0 cursor-ew-resize select-none"
+            style={{ height: 32, background: '#383838', borderRadius: 6 }} onMouseDown={editing ? undefined : onDown}>
+            {editing ? (
+                <input ref={ref} type="text" className="w-full bg-transparent outline-none text-center" style={LBL}
+                    value={local} onChange={e => setLocal(e.target.value)} onBlur={commit}
+                    onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }} />
+            ) : (
+                <span style={LBL}>{Math.round(value)}</span>
+            )}
+        </div>
+    );
+}
 
 export default function KeyframeEasingSection() {
     const nodes = useCreatorStore((state) => state.nodes);
     const selectedKeyframeIds = useCreatorStore((state) => state.selectedKeyframeIds);
     const updateKeyframe = useCreatorStore((state) => state.updateKeyframe);
-    const fps = useCreatorStore((state) => state.fps);
 
-    const [showBezierEditor, setShowBezierEditor] = useState(false);
-    const [showPresetDropdown, setShowPresetDropdown] = useState(false);
+    const [showPresets, setShowPresets] = useState(false);
+    // Ease In/Out linked (symmetric) by default, like After Effects' Easy Ease.
+    const [linked, setLinked] = useState(true);
 
-    // Parse selected keyframes into usable data
-    const { selectedKeyframes, displayCount } = useMemo(() => {
-        const items = selectedKeyframeIds.map(globalId => {
+    // Resolve the selected keyframes.
+    const selectedKeyframes = useMemo(() => {
+        return selectedKeyframeIds.map(globalId => {
             const [nodeId, path, kfId] = globalId.split(':');
             const node = nodes.get(nodeId);
             if (!node) return null;
-            const keyframes = node.animations?.[path] || [];
-            const kf = keyframes.find(k => k.id === kfId);
+            const kf = (node.animations?.[path] || []).find(k => k.id === kfId);
             if (!kf) return null;
-            return { nodeId, path, kf, node };
-        }).filter(Boolean) as any[];
-
-        // Calculate visual count: group by NodeId + Property Group Label + Time
-        // This makes "Position" count as 1 even if it has X and Y keyframes
-        const visualSlots = new Set();
-        items.forEach(item => {
-            // Map specific paths to their UI group labels to ensure correct counting
-            let groupKey = item.path;
-            if (item.path === 'transform.x' || item.path === 'transform.y') groupKey = 'transform.position';
-            if (item.path === 'transform.scaleX' || item.path === 'transform.scaleY') groupKey = 'transform.scale';
-            if (item.path === 'props.width' || item.path === 'props.height') groupKey = 'props.size';
-            if (item.path === 'props.radiusX' || item.path === 'props.radiusY') groupKey = 'props.radius';
-            
-            const slotKey = `${item.nodeId}:${groupKey}:${item.kf.time}`;
-            visualSlots.add(slotKey);
-        });
-
-        return { selectedKeyframes: items, displayCount: visualSlots.size };
+            return { nodeId, path, kf };
+        }).filter(Boolean) as { nodeId: string; path: string; kf: any }[];
     }, [selectedKeyframeIds, nodes]);
 
-    // Get the common easing of selected keyframes
+    // Common easing across the selection.
     const commonEasing = useMemo(() => {
         if (selectedKeyframes.length === 0) return null;
         const first = selectedKeyframes[0];
-        if (!first) return null;
         const easing = first.kf.easing || 'linear';
-        const bezier = first.kf.bezier;
-
-        // Check if all selected keyframes have the same easing
-        const allSame = selectedKeyframes.every(item =>
-            item && (item.kf.easing || 'linear') === easing
-        );
-
-        if (!allSame) return { easing: 'mixed', bezier: null };
-
-        return { easing, bezier };
+        const allSame = selectedKeyframes.every(it => (it.kf.easing || 'linear') === easing);
+        return { easing: allSame ? easing : 'mixed', bezier: allSame ? first.kf.bezier : null };
     }, [selectedKeyframes]);
 
-    // Calculate duration to next keyframe
-    const duration = useMemo(() => {
-        if (selectedKeyframes.length === 0) return 1;
-        const first = selectedKeyframes[0];
-        if (!first) return 1;
-        const kfs = first.node.animations?.[first.path] || [];
-        const idx = kfs.findIndex((k: any) => k.id === first.kf.id);
-        if (idx >= 0 && idx < kfs.length - 1) {
-            return (kfs[idx + 1].time - first.kf.time) / fps;
-        }
-        return 1;
-    }, [selectedKeyframes, fps]);
+    const applyBezier = (b: Bezier) => {
+        const preset = matchPreset(b);
+        selectedKeyframes.forEach(it => updateKeyframe(it.nodeId, it.path, it.kf.id, { easing: (preset || 'custom') as any, bezier: b }));
+    };
 
-    // Handle preset selection
-    const handlePresetSelect = (presetKey: string) => {
-        const preset = EASING_PRESETS[presetKey];
+    const handlePresetSelect = (key: string) => {
+        const preset = EASING_PRESETS[key];
         if (!preset) return;
-
-        selectedKeyframes.forEach(item => {
-            if (item) {
-                updateKeyframe(item.nodeId, item.path, item.kf.id, {
-                    easing: presetKey as any,
-                    bezier: preset.bezier
-                });
-            }
-        });
-        setShowPresetDropdown(false);
+        selectedKeyframes.forEach(it => updateKeyframe(it.nodeId, it.path, it.kf.id, { easing: key as any, bezier: preset.bezier }));
+        setShowPresets(false);
     };
 
-    // Handle bezier change from canvas
-    const handleBezierChange = (newBezier: [number, number, number, number]) => {
-        const matchedPreset = matchPreset(newBezier);
-        selectedKeyframes.forEach(item => {
-            if (item) {
-                updateKeyframe(item.nodeId, item.path, item.kf.id, {
-                    easing: matchedPreset || 'custom' as any,
-                    bezier: newBezier
-                });
-            }
-        });
-    };
-
-    // Don't render if no keyframes selected
     if (selectedKeyframes.length === 0) return null;
 
-    const currentBezier = commonEasing?.bezier ||
-        (commonEasing?.easing && EASING_PRESETS[commonEasing.easing]?.bezier) ||
-        [0, 0, 1, 1] as [number, number, number, number];
+    const currentBezier: Bezier = (commonEasing?.bezier
+        || (commonEasing?.easing && commonEasing.easing !== 'mixed' && EASING_PRESETS[commonEasing.easing]?.bezier)
+        || [0, 0, 1, 1]) as Bezier;
 
-    const currentPresetName = commonEasing?.easing === 'mixed'
-        ? 'Mixed'
-        : (matchPreset(currentBezier) ? EASING_PRESETS[matchPreset(currentBezier)!]?.label : 'Custom') || 'Linear';
+    const matched = matchPreset(currentBezier);
+    const presetLabel = commonEasing?.easing === 'mixed' ? 'Mixed' : (matched ? EASING_PRESETS[matched].label : 'Custom');
+
+    // Influence values: easeOut = handle-1 X, easeIn = (1 − handle-2 X).
+    const easeOut = Math.round(currentBezier[0] * 100);
+    const easeIn = Math.round((1 - currentBezier[2]) * 100);
+
+    const setEaseOut = (v: number) => {
+        const x1 = v / 100;
+        applyBezier([x1, currentBezier[1], linked ? 1 - x1 : currentBezier[2], currentBezier[3]]);
+    };
+    const setEaseIn = (v: number) => {
+        const x2 = 1 - v / 100;
+        applyBezier([linked ? 1 - x2 : currentBezier[0], currentBezier[1], x2, currentBezier[3]]);
+    };
 
     return (
-        <div className="p-4 border-b border-white/5 space-y-4">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-                <h3 className="text-[10px] font-semibold text-muted uppercase tracking-widest">Keyframe</h3>
-                <span className="text-[10px] font-medium text-accent bg-accent/15 px-2 py-0.5 rounded-full">
-                    {displayCount} selected
-                </span>
-            </div>
+        <div className="flex flex-col" style={{ padding: 10, gap: 10, borderBottom: '1px solid #444444', background: '#2C2C2C' }}>
+            <span style={LBL}>Easing</span>
 
-            {/* Easing Preset Quick Buttons */}
-            <div className="space-y-2">
-                <label className="text-[10px] text-muted uppercase tracking-wider">Easing Preset</label>
-                <div className="grid grid-cols-2 gap-2">
-                    {QUICK_PRESETS.map(presetKey => {
-                        const preset = EASING_PRESETS[presetKey];
-                        const isActive = commonEasing?.easing === presetKey ||
-                            (commonEasing?.bezier && matchPreset(commonEasing.bezier) === presetKey);
-
-                        return (
-                            <button
-                                key={presetKey}
-                                onClick={() => handlePresetSelect(presetKey)}
-                                className={`flex items-center justify-center gap-1.5 h-8 rounded-md text-[11px] font-medium transition-all ${isActive
-                                    ? 'text-accent border border-accent/40'
-                                    : 'text-muted border border-white/[0.06] hover:bg-hover hover:text-secondary'
-                                    }`}
-                                style={isActive ? { background: 'var(--accent-soft)' } : {}}
-                            >
-                                <span className="text-current">{PRESET_ICONS[presetKey]}</span>
-                                {preset.label}
-                            </button>
-                        );
-                    })}
-                </div>
-            </div>
-
-            {/* Current Easing with Dropdown */}
-            <div className="space-y-2">
-                <label className="text-[10px] text-muted uppercase tracking-wider">Transition Curve</label>
-                <div className="relative">
-                    <button
-                        onClick={() => setShowBezierEditor(!showBezierEditor)}
-                        className="w-full flex items-center justify-between bg-surface border border-white/[0.06] rounded-md px-3 h-9 text-[11px] text-secondary hover:text-primary hover:border-white/10 transition-all"
-                    >
-                        <div className="flex items-center gap-2">
-                            <span className="text-accent">{PRESET_ICONS[commonEasing?.easing || 'linear'] || <Activity size={12} />}</span>
-                            {currentPresetName}
-                        </div>
-                        <ChevronDown size={12} className={`text-white/40 transition-transform ${showBezierEditor ? 'rotate-180' : ''}`} />
-                    </button>
-
-                    {/* Preset Dropdown */}
-                    {showPresetDropdown && (
-                        <div className="absolute left-0 right-0 top-full mt-1 border border-white/[0.06] rounded-lg shadow-xl shadow-black/50 py-1 z-50 max-h-[200px] overflow-y-auto" style={{ background: 'var(--bg-panel)' }}>
+            {/* Preset dropdown */}
+            <div className="relative">
+                <button onClick={() => setShowPresets(v => !v)} className="w-full flex items-center justify-between"
+                    style={{ height: 32, background: '#383838', borderRadius: 6, paddingLeft: 8 }}>
+                    <span className="flex items-center gap-2 truncate" style={LBL}>
+                        <CurveIcon />
+                        {presetLabel}
+                    </span>
+                    <div className="flex items-center justify-center shrink-0" style={{ width: 24, height: 32 }}>
+                        <PhCaretDown size={14} weight="regular" color="rgba(255,255,255,0.7)" />
+                    </div>
+                </button>
+                {showPresets && (
+                    <>
+                        <div className="fixed inset-0 z-[99]" onClick={() => setShowPresets(false)} />
+                        <div className="absolute top-full left-0 right-0 mt-1 z-[100] rounded overflow-y-auto"
+                            style={{ background: '#27292C', border: '1px solid #444444', boxShadow: '0 8px 24px rgba(0,0,0,0.4)', maxHeight: 260 }}>
                             {Object.entries(EASING_PRESETS).map(([key, preset]) => (
-                                <button
-                                    key={key}
-                                    onClick={() => handlePresetSelect(key)}
-                                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-left transition-colors ${commonEasing?.easing === key
-                                        ? 'bg-accent/15 text-accent'
-                                        : 'text-secondary hover:bg-hover hover:text-primary'
-                                        }`}
-                                >
-                                    <span className="text-accent">{PRESET_ICONS[key] || <Activity size={12} />}</span>
+                                <button key={key} onClick={() => handlePresetSelect(key)}
+                                    className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white/5 transition-colors"
+                                    style={{ ...LBL, color: matched === key ? 'var(--accent)' : '#FFFFFF' }}>
+                                    <CurveIcon color={matched === key ? 'var(--accent)' : 'rgba(255,255,255,0.7)'} />
                                     {preset.label}
                                 </button>
                             ))}
                         </div>
-                    )}
-                </div>
+                    </>
+                )}
             </div>
 
-            {/* Bezier Editor Panel */}
-            {showBezierEditor && (
-                <div className="space-y-4 pt-2">
-                    {/* Duration */}
-                    <div className="flex items-center justify-between">
-                        <span className="text-[10px] text-white/30 font-medium">Duration</span>
-                        <span className="text-[11px] font-mono text-white/60 bg-white/[0.03] px-2 py-1 rounded-md">
-                            {duration.toFixed(2)} s
-                        </span>
-                    </div>
+            {/* Editable graph */}
+            <div className="flex justify-center">
+                <BezierCanvas bezier={currentBezier} onChange={(b) => applyBezier(b)} width={218} height={130} />
+            </div>
 
-                    {/* All Presets Grid */}
-                    <div className="grid grid-cols-3 gap-1.5">
-                        {Object.entries(EASING_PRESETS).map(([key, preset]) => {
-                            const isActive = commonEasing?.easing === key ||
-                                (commonEasing?.bezier && matchPreset(commonEasing.bezier) === key);
-
-                            return (
-                                <button
-                                    key={key}
-                                    onClick={() => handlePresetSelect(key)}
-                                    className={`flex items-center justify-center gap-1 h-7 rounded text-[9px] font-medium transition-all ${isActive
-                                        ? 'text-accent border border-accent/40'
-                                        : 'text-muted border border-white/[0.06] hover:bg-hover hover:text-secondary'
-                                        }`}
-                                    style={isActive ? { background: 'var(--accent-soft)' } : {}}
-                                >
-                                    {preset.label}
-                                </button>
-                            );
-                        })}
-                    </div>
-
-                    {/* Bezier Canvas */}
-                    <div className="flex justify-center">
-                        <BezierCanvas
-                            bezier={currentBezier}
-                            onChange={handleBezierChange}
-                            width={240}
-                            height={160}
-                        />
-                    </div>
-
-                    {/* Value Input */}
-                    <div className="flex items-center justify-between">
-                        <span className="text-[10px] text-white/30 font-medium">Value</span>
-                        <input
-                            type="text"
-                            value={formatBezier(currentBezier)}
-                            onChange={(e) => {
-                                const parsed = parseBezier(e.target.value);
-                                if (parsed) handleBezierChange(parsed);
-                            }}
-                            className="bg-surface border border-white/[0.06] rounded-md px-2 py-1 text-[10px] font-mono text-secondary w-[140px] focus:outline-none focus:border-accent/50 transition-colors"
-                            placeholder="0, 0, 1, 1"
-                        />
-                    </div>
-                </div>
-            )}
+            {/* Ease Out / Ease In values + link (symmetric) */}
+            <div className="flex items-center" style={{ gap: 6 }}>
+                <EaseInput value={easeOut} onChange={(v) => setEaseOut(v)} />
+                <button onClick={() => setLinked(v => !v)}
+                    className="flex items-center justify-center shrink-0 transition-colors"
+                    style={{ width: 28, height: 32, borderRadius: 6, background: linked ? '#0A6DC2' : 'transparent' }}
+                    title={linked ? 'Ease in/out linked' : 'Ease in/out independent'}>
+                    <PhLinkSimple size={14} weight="regular" color={linked ? '#FFFFFF' : 'rgba(255,255,255,0.4)'} />
+                </button>
+                <EaseInput value={easeIn} onChange={(v) => setEaseIn(v)} />
+            </div>
         </div>
     );
 }

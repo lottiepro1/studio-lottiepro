@@ -15,12 +15,12 @@ export const EASING_PRESETS: Record<string, EasingPreset> = {
     },
     'smooth': {
         label: 'Smooth',
-        bezier: [0.4, 0, 0.2, 1], // Modern "Smooth" (Quartic-like)
+        bezier: [0.6, 0, 0.4, 1], // Symmetric ease in-out, 60% influence both sides
         icon: 'feather',
     },
     'easy-ease': {
         label: 'Easy Ease',
-        bezier: [0.33, 0, 0.67, 1], // Standard AE 33% influence
+        bezier: [0.333, 0, 0.667, 1], // After Effects "Easy Ease" (F9) — 33.3% influence both
         icon: 'wave',
     },
     'ease-in': {

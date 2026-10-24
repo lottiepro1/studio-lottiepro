@@ -47,6 +47,9 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
     const trackVisibility = useCreatorStore((state) => state.trackVisibility[node.id]) || EMPTY_ARRAY;
     const moveNode = useCreatorStore((state) => state.moveNode);
     const parentNode = useCreatorStore((state) => node.parentId ? state.nodes.get(node.parentId) : null);
+    // Names of the linked layers, for the matte/parent tooltips.
+    const matteSourceName = useCreatorStore((state) => node.matteSourceId ? state.nodes.get(node.matteSourceId)?.name : undefined);
+    const parentLayerName = useCreatorStore((state) => node.parentLayerId ? state.nodes.get(node.parentLayerId)?.name : undefined);
     const updateNode = useCreatorStore((state) => state.updateNode);
     const setEditingNode = useCreatorStore((state) => state.setEditingNode);
     const setMatte = useCreatorStore((state) => state.setMatte);
@@ -482,10 +485,12 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
                         style={{ width: 2, alignSelf: 'stretch', background: '#2C2C2C', flexShrink: 0 }}
                     />
 
-                    {/* Action icons */}
-                    <div className="flex items-center shrink-0">
-                        {/* Matte + Parent — hover-only for non-selected, always visible for selected */}
-                        <div className={`flex items-center transition-opacity ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                    {/* Action icons — self-stretch so the dividers span the full row height,
+                        items-center so the icon buttons stay vertically centered. */}
+                    <div className="flex items-center self-stretch shrink-0">
+                        {/* Matte + Parent — each icon stays visible when its relation is active
+                            (matte set / parented), otherwise hover-only. */}
+                        <div className="flex items-center self-stretch">
                             {/* Matte (Intersect) — click opens dropdown, drag starts pick whip */}
                             <button
                                 ref={matteTriggerRef}
@@ -514,15 +519,15 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
                                     window.addEventListener('mousemove', onMove);
                                     window.addEventListener('mouseup', onUp);
                                 }}
-                                className="w-6 h-6 flex items-center justify-center rounded transition-colors hover:bg-white/10"
+                                className={`w-6 h-6 flex items-center justify-center rounded transition-all hover:bg-white/10 ${(isSelected || node.matteSourceId) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
                                 style={{ color: node.matteSourceId ? '#FFFFFF' : ICON_COLOR }}
-                                title="Set Matte — click to pick from list, drag to layer"
+                                title={node.matteSourceId ? `Matte: ${matteSourceName || 'Layer'}` : 'Set matte'}
                             >
                                 <Intersect size={16} weight="fill" />
                             </button>
 
-                            {/* Divider between Intersect and SelectionAll */}
-                            <div style={{ width: 2, alignSelf: 'stretch', background: '#2C2C2C', flexShrink: 0 }} />
+                            {/* Divider between Intersect and SelectionAll — hover/selected only */}
+                            <div className={`transition-opacity ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`} style={{ width: 2, alignSelf: 'stretch', background: '#2C2C2C', flexShrink: 0 }} />
 
                             {/* Parent layer (SelectionAll) — click opens dropdown, drag starts pick whip */}
                             <button
@@ -552,9 +557,9 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
                                     window.addEventListener('mousemove', onMove);
                                     window.addEventListener('mouseup', onUp);
                                 }}
-                                className="w-6 h-6 flex items-center justify-center rounded transition-colors hover:bg-white/10"
+                                className={`w-6 h-6 flex items-center justify-center rounded transition-all hover:bg-white/10 ${(isSelected || node.parentLayerId) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
                                 style={{ color: node.parentLayerId ? '#FFFFFF' : ICON_COLOR }}
-                                title="Set Parent — click to pick from list, drag to layer"
+                                title={node.parentLayerId ? `Parent: ${parentLayerName || 'Layer'}` : 'Set parent'}
                             >
                                 <SelectionAll size={16} weight="fill" />
                             </button>
@@ -880,8 +885,7 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
                                     justifyContent: 'space-between',
                                     height: 32,
                                     paddingLeft: `${depth * 12 + 22}px`,
-                                    background: '#383838',
-                                    borderBottom: '1px solid #2C2C2C',
+                                    paddingRight: 10,
                                     overflow: 'hidden',
                                 }}
                             >
@@ -911,44 +915,32 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
                                     </button>
                                     <span style={{
                                         fontSize: 11, fontWeight: 450, fontFamily: 'Inter',
-                                        color: '#FFFFFF', letterSpacing: '0.055em',
+                                        color: '#FFFFFF', letterSpacing: '0.005em',
                                         userSelect: 'none', whiteSpace: 'nowrap',
                                     }}>
                                         {group.label}
                                     </span>
                                 </div>
 
-                                {/* Right: structured input area with 1px separators */}
-                                <div style={{ display: 'flex', alignSelf: 'stretch', alignItems: 'stretch', flexShrink: 0 }}>
-                                    {/* Leading separator */}
-                                    <div style={{ width: 1, background: '#2C2C2C', flexShrink: 0 }} />
-
+                                {/* Right: value patches (#383838), no dividers — matches the inspector */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, width: group.props.length > 1 ? 140 : 67 }}>
                                     {group.props.map((p: any, i: number) => (
                                         <Fragment key={p.path}>
-                                            {i > 0 && (
-                                                group.hasLink ? (
-                                                    /* Scale/Size chain-link separator — click to toggle link */
-                                                    <button
-                                                        onClick={() => setNodeProperty(node.id, 'transform.scaleLink', !node.transform.scaleLink)}
-                                                        style={{
-                                                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                                            padding: '0 5px',
-                                                            borderLeft: '1px solid #2C2C2C',
-                                                            borderRight: '1px solid #2C2C2C',
-                                                            background: 'transparent',
-                                                            cursor: 'pointer',
-                                                            flexShrink: 0,
-                                                        }}
-                                                    >
-                                                        <PhLinkSimple
-                                                            size={10}
-                                                            color={node.transform.scaleLink ? '#FFFFFF' : 'rgba(255,255,255,0.3)'}
-                                                        />
-                                                    </button>
-                                                ) : (
-                                                    /* Regular 1px separator */
-                                                    <div style={{ width: 1, background: '#2C2C2C', flexShrink: 0 }} />
-                                                )
+                                            {i > 0 && group.hasLink && (
+                                                /* Scale/Size chain-link — standalone icon, no separators */
+                                                <button
+                                                    onClick={() => setNodeProperty(node.id, 'transform.scaleLink', !node.transform.scaleLink)}
+                                                    style={{
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                        width: 16, height: 24, flexShrink: 0,
+                                                        background: 'transparent', cursor: 'pointer',
+                                                    }}
+                                                >
+                                                    <PhLinkSimple
+                                                        size={12}
+                                                        color={node.transform.scaleLink ? '#FFFFFF' : 'rgba(255,255,255,0.3)'}
+                                                    />
+                                                </button>
                                             )}
                                             <PropertyInput
                                                 nodeId={node.id}
@@ -985,7 +977,7 @@ const TimelineSidebarTrack = memo(function TimelineSidebarTrack({
                                 <>
                                     <div
                                         className="flex items-center cursor-pointer"
-                                        style={{ height: 32, paddingLeft: `${depth * 12 + 22}px`, paddingRight: 8, background: '#383838', borderBottom: '1px solid #2C2C2C' }}
+                                        style={{ height: 32, paddingLeft: `${depth * 12 + 22}px`, paddingRight: 8 }}
                                         onClick={() => toggleShapeGroupExpand(node.id)}
                                     >
                                         <button className="p-1 mr-1" style={{ color: 'rgba(255,255,255,0.30)' }}>
@@ -1089,8 +1081,8 @@ function PropertyInput({ nodeId, propertyPath, propLabel, value, isPercent, isDe
         <div
             style={{
                 display: 'flex', alignItems: 'center',
-                height: '100%', padding: '0 8px',
-                minWidth: showPropLabel ? 54 : 42,
+                flex: 1, minWidth: 0, height: 24, padding: '0 8px',
+                background: '#383838', borderRadius: 5, overflow: 'hidden',
                 cursor: isEditing ? 'text' : 'ew-resize',
                 userSelect: 'none',
             }}

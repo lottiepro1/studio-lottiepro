@@ -1177,7 +1177,11 @@ export default function CanvasView() {
       const step = e.shiftKey ? 10 : 1;
 
       if (e.key.startsWith('Arrow')) {
-        if (!isInput && state.activePanel === 'canvas') {
+        // Nudge from any of the main editor surfaces — selecting a layer in the Layers or
+        // Timeline panel is just as valid as selecting it on the canvas. (Inputs are still
+        // excluded via isInput; the Timeline panel doesn't bind arrow keys itself.)
+        const nudgePanels = ['canvas', 'layers', 'timeline'];
+        if (!isInput && nudgePanels.includes(state.activePanel)) {
           e.preventDefault();
           state.pushToHistory('Nudge Objects');
 
